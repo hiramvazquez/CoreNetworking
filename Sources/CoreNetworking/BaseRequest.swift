@@ -1,10 +1,3 @@
-//
-//  BaseRequest.swift
-//  HiramNetworking
-//
-//  Created by Hiram on 2025-02-17.
-//
-
 import Foundation
 
 /// HTTP methods supported by the API

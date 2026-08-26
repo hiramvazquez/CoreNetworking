@@ -219,11 +219,13 @@ extension APIError {
         case let (.networkError(l), .networkError(r)):
             return l.code == r.code && l.failureURLString == r.failureURLString
         case (.decodingError, .decodingError):
-            // DecodingError is not Equatable; treat as unequal unless you want to compare descriptions
-            return false
+            // Igualdad POR CASO (DecodingError no es Equatable): dos fallos de
+            // decodificación comparan iguales. Antes devolvía false y rompía la
+            // reflexividad (x != x), que invalida cualquier uso en colecciones.
+            return true
         case (.encodingError, .encodingError):
-            // EncodingError is not Equatable; treat as unequal unless you want to compare descriptions
-            return false
+            // Igualdad POR CASO — mismo racional que decodingError.
+            return true
         case (.certificateValidationFailed, .certificateValidationFailed):
             return true
         case (.cancelled, .cancelled):

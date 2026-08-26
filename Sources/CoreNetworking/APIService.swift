@@ -200,12 +200,18 @@ public final class APIService: APIServiceProtocol {
             await interceptor.didReceive(response, data: data)
         }
 
+        // didFail se notifica en TODOS los caminos de error del pipeline:
+        // transporte (arriba), respuesta inválida y status non-2xx.
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw APIError.invalidResponse
+            let apiError = APIError.invalidResponse
+            await notifyInterceptorsOfFailure(urlRequest, error: apiError)
+            throw apiError
         }
 
         guard (200..<300).contains(httpResponse.statusCode) else {
-            throw APIError.map(data: data, response: httpResponse)
+            let apiError = APIError.map(data: data, response: httpResponse)
+            await notifyInterceptorsOfFailure(urlRequest, error: apiError)
+            throw apiError
         }
 
         return (data, httpResponse)

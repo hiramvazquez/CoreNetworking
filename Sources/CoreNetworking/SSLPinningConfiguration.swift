@@ -160,36 +160,13 @@ public struct SSLPinningConfiguration: Sendable {
     private func extractPublicKeys(from serverTrust: SecTrust) -> [SecKey] {
         var publicKeys: [SecKey] = []
 
-        #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
-        // iOS 15+
-        if #available(iOS 15.0, tvOS 15.0, watchOS 8.0, *) {
-            if let certificates = SecTrustCopyCertificateChain(serverTrust) as? [SecCertificate] {
-                for certificate in certificates {
-                    if let publicKey = SecCertificateCopyKey(certificate) {
-                        publicKeys.append(publicKey)
-                    }
-                }
-            }
-        } else {
-            // iOS 14 and earlier
-            let certificateCount = SecTrustGetCertificateCount(serverTrust)
-            for i in 0..<certificateCount {
-                if let certificate = SecTrustGetCertificateAtIndex(serverTrust, i),
-                   let publicKey = SecCertificateCopyKey(certificate) {
+        if let certificates = SecTrustCopyCertificateChain(serverTrust) as? [SecCertificate] {
+            for certificate in certificates {
+                if let publicKey = SecCertificateCopyKey(certificate) {
                     publicKeys.append(publicKey)
                 }
             }
         }
-        #else
-        // macOS
-        let certificateCount = SecTrustGetCertificateCount(serverTrust)
-        for i in 0..<certificateCount {
-            if let certificate = SecTrustGetCertificateAtIndex(serverTrust, i),
-               let publicKey = SecCertificateCopyKey(certificate) {
-                publicKeys.append(publicKey)
-            }
-        }
-        #endif
 
         return publicKeys
     }

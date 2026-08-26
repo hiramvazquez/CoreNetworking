@@ -1,90 +1,108 @@
 #if canImport(XCTest) || DEBUG
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
+import os
 
-// MARK: - Thread-Safe Mock Storage
+// MARK: - MockResponse
 
-/// Thread-safe actor for storing mock network exchanges.
-///
-/// This actor ensures that mock requests can be safely accessed from multiple threads
-/// without data races, making it compatible with Swift 6 strict concurrency.
-actor MockStorage {
-    private var mockRequests: Set<MockNetworkExchange> = []
+/// A mocked HTTP response.
+public struct MockResponse: Sendable, Equatable {
+    public let statusCode: Int
+    public let data: Data?
+    /// Response headers. Include "Content-Length" to exercise download progress.
+    public let headers: [String: String]
 
-    func insert(_ mock: MockNetworkExchange) {
-        mockRequests.insert(mock)
+    public init(statusCode: Int, data: Data? = nil, headers: [String: String] = [:]) {
+        self.statusCode = statusCode
+        self.data = data
+        self.headers = headers
     }
+}
 
-    func remove(for url: URL) -> MockNetworkExchange? {
-        guard let index = mockRequests.firstIndex(where: { $0.urlRequest.url == url }) else {
-            return nil
-        }
-        return mockRequests.remove(at: index)
-    }
+// MARK: - MockNetworkExchange
 
-    func contains(url: URL) -> Bool {
-        mockRequests.contains(where: { $0.urlRequest.url == url })
-    }
+/// A registered mock: request matcher (method + URL) plus the outcome.
+public struct MockNetworkExchange: Sendable {
+    public let method: HTTPMethod
+    public let url: URL
+    public let response: MockResponse
+    /// Transport-level failure to simulate instead of a response.
+    public let error: URLError?
+    /// Optional artificial latency before delivering — useful to test
+    /// cancellation. `stopLoading` cancels a pending delivery.
+    public let latency: Duration?
 
-    func removeAll() {
-        mockRequests.removeAll()
-    }
-
-    func count() -> Int {
-        mockRequests.count
+    public init(
+        method: HTTPMethod = .GET,
+        url: URL,
+        response: MockResponse,
+        error: URLError? = nil,
+        latency: Duration? = nil
+    ) {
+        self.method = method
+        self.url = url
+        self.response = response
+        self.error = error
+        self.latency = latency
     }
 }
 
 // MARK: - MockURLProtocol
 
-/// URLProtocol subclass for intercepting and mocking network requests in tests.
+/// Deterministic `URLProtocol` for intercepting requests in tests.
 ///
-/// This protocol allows you to inject mock responses for testing without
-/// hitting real network endpoints.
-///
-/// ## Thread Safety
-/// Uses an actor-based storage system to ensure thread-safe access to mock data,
-/// compatible with Swift 6 strict concurrency.
+/// - Registration is synchronous (no fire-and-forget tasks): once `register`
+///   returns, the mock is visible to the next request.
+/// - Matching is by HTTP method + URL.
+/// - Responses are reusable: the same mock answers any number of requests
+///   until `removeAll()`.
+/// - Every handled request is recorded (`recordedRequests`) so tests can
+///   assert exact request counts (retry) and headers.
 ///
 /// ## Example
 /// ```swift
-/// // Setup mock response
-/// let mockData = """
-/// {"id": 1, "title": "Test Game"}
-/// """.data(using: .utf8)!
-///
-/// let url = URL(string: "https://api.example.com/games")!
-/// MockAPIHelper.setupMock(for: url, data: mockData)
-///
-/// // Configure URLSession to use mock
-/// let config = URLSessionConfiguration.ephemeral
-/// config.protocolClasses = [MockURLProtocol.self]
-/// let session = URLSession(configuration: config)
-///
-/// // Requests will now return mock data
-/// let (data, response) = try await session.data(from: url)
+/// MockURLProtocol.register(MockNetworkExchange(
+///     url: URL(string: "https://unit.test/games")!,
+///     response: MockResponse(statusCode: 200, data: json)
+/// ))
+/// let configuration = NetworkingConfiguration(
+///     baseURL: URL(string: "https://unit.test")!,
+///     protocolClasses: [MockURLProtocol.self]
+/// )
 /// ```
 public final class MockURLProtocol: URLProtocol {
-    /// Thread-safe storage for mock requests
-    nonisolated(unsafe) private static let storage = MockStorage()
-
-    /// Legacy property for backward compatibility (deprecated).
-    ///
-    /// **Warning**: This property is not thread-safe. Use `MockAPIHelper.setupMock()`
-    /// instead, which uses the thread-safe actor storage.
-    @available(*, deprecated, message: "Use MockAPIHelper.setupMock() for thread-safe mock injection")
-    public static var mockRequests: Set<MockNetworkExchange> {
-        get {
-            // Note: This is unsafe and only provided for backward compatibility
-            []
-        }
-        set {
-            // Note: This is unsafe and only provided for backward compatibility
-            // New code should use MockAPIHelper.setupMock()
-        }
+    private struct MatchKey: Hashable, Sendable {
+        let method: String
+        let url: URL
     }
+
+    private struct RegistryState: Sendable {
+        var exchanges: [MatchKey: MockNetworkExchange] = [:]
+        var recorded: [URLRequest] = []
+    }
+
+    private static let registry = OSAllocatedUnfairLock(initialState: RegistryState())
+
+    private let pendingDelivery = OSAllocatedUnfairLock<Task<Void, Never>?>(initialState: nil)
+
+    // MARK: Registration API
+
+    /// Registers a mock. Overwrites any previous mock for the same method+URL.
+    public static func register(_ exchange: MockNetworkExchange) {
+        let key = MatchKey(method: exchange.method.rawValue, url: exchange.url)
+        registry.withLock { $0.exchanges[key] = exchange }
+    }
+
+    /// Removes all mocks and recorded requests.
+    public static func removeAll() {
+        registry.withLock { $0 = RegistryState() }
+    }
+
+    /// Every request this protocol handled, in order.
+    public static var recordedRequests: [URLRequest] {
+        registry.withLock { $0.recorded }
+    }
+
+    // MARK: URLProtocol
 
     public override class func canInit(with request: URLRequest) -> Bool {
         true
@@ -99,106 +117,67 @@ public final class MockURLProtocol: URLProtocol {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
         }
+        let method = request.httpMethod ?? "GET"
+        let handledRequest = request
 
-        // Fetch mock from thread-safe storage
-        Task {
-            guard let mock = await Self.storage.remove(for: url) else {
-                client?.urlProtocol(self, didFailWithError: URLError(.resourceUnavailable))
-                return
-            }
+        let exchange = Self.registry.withLock { state -> MockNetworkExchange? in
+            state.recorded.append(handledRequest)
+            return state.exchanges[MatchKey(method: method, url: url)]
+        }
 
-            // Process the response
-            if let error = mock.error {
-                client?.urlProtocol(self, didFailWithError: error)
-            } else {
-                client?.urlProtocol(self, didReceive: mock.urlResponse, cacheStoragePolicy: .notAllowed)
-                if let data = mock.response.data {
-                    client?.urlProtocol(self, didLoad: data)
-                }
-                client?.urlProtocolDidFinishLoading(self)
+        guard let exchange else {
+            client?.urlProtocol(self, didFailWithError: URLError(.resourceUnavailable))
+            return
+        }
+
+        if let latency = exchange.latency {
+            // nonisolated(unsafe) JUSTIFICADO: URLProtocol no es Sendable para el
+            // compilador, pero el URL loading system mantiene viva la instancia
+            // hasta finish/stopLoading y los callbacks de `client` son seguros
+            // desde cualquier hilo; el único estado mutable propio
+            // (`pendingDelivery`) va bajo lock.
+            nonisolated(unsafe) let protocolInstance = self
+            let task = Task {
+                try? await Task.sleep(for: latency)
+                guard !Task.isCancelled else { return }
+                protocolInstance.deliver(exchange)
             }
+            pendingDelivery.withLock { $0 = task }
+        } else {
+            deliver(exchange)
         }
     }
 
-    public override func stopLoading() {}
-
-    // MARK: - Internal Methods (for MockAPIHelper)
-
-    /// Inserts a mock into thread-safe storage.
-    internal static func insertMock(_ mock: MockNetworkExchange) async {
-        await storage.insert(mock)
+    public override func stopLoading() {
+        pendingDelivery.withLock { pending in
+            pending?.cancel()
+            pending = nil
+        }
     }
 
-    /// Checks if a mock exists for the given URL.
-    internal static func containsMock(for url: URL) async -> Bool {
-        await storage.contains(url: url)
+    // MARK: Delivery
+
+    private func deliver(_ exchange: MockNetworkExchange) {
+        if let error = exchange.error {
+            client?.urlProtocol(self, didFailWithError: error)
+            return
+        }
+
+        guard let httpResponse = HTTPURLResponse(
+            url: exchange.url,
+            statusCode: exchange.response.statusCode,
+            httpVersion: "HTTP/1.1",
+            headerFields: exchange.response.headers
+        ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+
+        client?.urlProtocol(self, didReceive: httpResponse, cacheStoragePolicy: .notAllowed)
+        if let data = exchange.response.data {
+            client?.urlProtocol(self, didLoad: data)
+        }
+        client?.urlProtocolDidFinishLoading(self)
     }
-
-    /// Removes all mocks from storage.
-    internal static func removeAllMocks() async {
-        await storage.removeAll()
-    }
-}
-
-// MARK: - MockResponse
-
-/// Represents a mock HTTP response.
-public struct MockResponse: Hashable, Sendable {
-    public let statusCode: Int
-    public let data: Data?
-
-    public init(statusCode: Int, data: Data? = nil) {
-        self.statusCode = statusCode
-        self.data = data
-    }
-}
-
-// MARK: - MockNetworkExchange
-
-/// Represents a complete mock network exchange (request + response + error).
-public struct MockNetworkExchange: Hashable, Sendable {
-    public static func == (lhs: MockNetworkExchange, rhs: MockNetworkExchange) -> Bool {
-        lhs.urlRequest.url == rhs.urlRequest.url &&
-        lhs.response.data == rhs.response.data &&
-        lhs.response.statusCode == rhs.response.statusCode
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(urlRequest.url)
-        hasher.combine(response.statusCode)
-        if let data = response.data { hasher.combine(data) }
-    }
-
-    public let urlRequest: URLRequest
-    public let response: MockResponse
-    public let error: Error?
-
-    public init(urlRequest: URLRequest, response: MockResponse, error: Error? = nil) {
-        self.urlRequest = urlRequest
-        self.response = response
-        self.error = error
-    }
-
-    public var urlResponse: HTTPURLResponse {
-        HTTPURLResponse(
-            url: urlRequest.url!,
-            statusCode: response.statusCode,
-            httpVersion: nil,
-            headerFields: nil
-        )!
-    }
-}
-
-// MARK: - TestCodeChecker (Deprecated)
-
-/// Deprecated test utility. Use MockAPIHelper instead.
-@available(*, deprecated, message: "Use MockAPIHelper for setting up mocks")
-public enum TestCodeChecker {
-    public enum TestApiCode: Int {
-        case success = 200
-        case error = 400
-    }
-
-    public static let code: TestApiCode = .success
 }
 #endif

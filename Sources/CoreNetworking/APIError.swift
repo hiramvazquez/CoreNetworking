@@ -150,105 +150,36 @@ public enum APIError: Error, Equatable, Sendable {
     }
 }
 
-// MARK: - UserPresentableError Conformance
+// MARK: - Technical Description
 
-extension APIError: UserPresentableError {
-    /// User-friendly error message
+extension APIError: CustomStringConvertible {
+    /// Technical, non-localized description for logs and debugging.
     ///
-    /// Provides localized, actionable messages for end users.
-    public var message: String {
+    /// Deliberately NOT user-facing copy: mapping errors to user-presentable,
+    /// localized messages is the consumer app's responsibility (decision del
+    /// owner - la capa de presentacion vive fuera de este paquete).
+    public var description: String {
         switch self {
         case .unknown:
-            return "An unknown error occurred"
-
+            return "APIError.unknown"
         case .invalidURL:
-            return "Invalid request URL"
-
+            return "APIError.invalidURL"
         case .invalidResponse:
-            return "Invalid server response"
-
+            return "APIError.invalidResponse"
         case .httpStatus(let code):
-            return httpStatusMessage(for: code)
-
+            return "APIError.httpStatus(\(code))"
         case .custom(let custom):
-            return custom.message
-
+            return "APIError.custom(message: \(custom.message))"
         case .networkError(let urlError):
-            return networkErrorMessage(for: urlError)
-
-        case .decodingError:
-            return "Failed to parse server response"
-
-        case .encodingError:
-            return "Failed to encode request data"
-
+            return "APIError.networkError(code: \(urlError.code.rawValue))"
+        case .decodingError(let decodingError):
+            return "APIError.decodingError(\(decodingError))"
+        case .encodingError(let encodingError):
+            return "APIError.encodingError(\(encodingError))"
         case .certificateValidationFailed:
-            return "Certificate validation failed. Please check your connection."
-
+            return "APIError.certificateValidationFailed"
         case .cancelled:
-            return "Request was cancelled"
-        }
-    }
-
-    // MARK: - Private Helpers
-
-    private func httpStatusMessage(for code: Int) -> String {
-        switch code {
-        case 400:
-            return "Bad request"
-        case 401:
-            return "Unauthorized. Please login again."
-        case 403:
-            return "Access forbidden"
-        case 404:
-            return "Resource not found"
-        case 408:
-            return "Request timeout"
-        case 409:
-            return "Conflict with current state"
-        case 422:
-            return "Validation failed"
-        case 429:
-            return "Too many requests. Please try again later."
-        case 500:
-            return "Internal server error"
-        case 502:
-            return "Bad gateway"
-        case 503:
-            return "Service unavailable"
-        case 504:
-            return "Gateway timeout"
-        default:
-            if (400..<500).contains(code) {
-                return "Client error (\(code))"
-            } else if (500..<600).contains(code) {
-                return "Server error (\(code))"
-            } else {
-                return "HTTP error \(code)"
-            }
-        }
-    }
-
-    private func networkErrorMessage(for error: URLError) -> String {
-        switch error.code {
-        case .notConnectedToInternet:
-            return "No internet connection"
-        case .timedOut:
-            return "Request timed out"
-        case .cannotConnectToHost:
-            return "Cannot connect to server"
-        case .networkConnectionLost:
-            return "Network connection lost"
-        case .dnsLookupFailed:
-            return "Server not found"
-        case .badServerResponse:
-            return "Invalid server response"
-        case .cannotFindHost:
-            return "Server not found"
-        case .cancelled:
-            return "Request cancelled"
-        default:
-            return "Network error: \(error.localizedDescription)"
+            return "APIError.cancelled"
         }
     }
 }

@@ -31,6 +31,10 @@ final class PinningSessionDelegate: NSObject, URLSessionDelegate {
         // 3 estados: notApplicable → validación TLS por defecto del sistema;
         // validated → credencial; failed → cancelar. Nunca useCredential a ciegas.
         let result = pinning.validate(serverTrust: serverTrust, host: challenge.protectionSpace.host)
+        if result == .failed {
+            // Solo el host (privado). JAMÁS se loguean pins ni claves.
+            NetLog.pinning.error("pinning falló para \(challenge.protectionSpace.host, privacy: .private(mask: .hash))")
+        }
         let credential = result == .validated ? URLCredential(trust: serverTrust) : nil
         completionHandler(result.disposition, credential)
     }

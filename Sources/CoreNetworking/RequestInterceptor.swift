@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Protocol for intercepting and modifying network requests and responses.
 ///
@@ -8,34 +9,17 @@ import Foundation
 /// ## Common Use Cases
 /// - Request/Response logging
 /// - Authentication token injection
-/// - Performance monitoring
 /// - Error tracking
 /// - Custom headers based on environment
-///
-/// ## Example - Logging Interceptor
-/// ```swift
-/// struct LoggingInterceptor: RequestInterceptor {
-///     func willSend(_ request: URLRequest) async -> URLRequest {
-///         print("📤 \(request.httpMethod ?? "GET") \(request.url?.absoluteString ?? "")")
-///         return request
-///     }
-///
-///     func didReceive(_ response: URLResponse, data: Data) async {
-///         if let http = response as? HTTPURLResponse {
-///             print("📥 Status: \(http.statusCode)")
-///         }
-///     }
-/// }
-/// ```
 ///
 /// ## Example - Auth Token Interceptor
 /// ```swift
 /// struct AuthInterceptor: RequestInterceptor {
-///     let tokenProvider: () -> String?
+///     let tokenProvider: @Sendable () async -> String?
 ///
 ///     func willSend(_ request: URLRequest) async -> URLRequest {
 ///         var modified = request
-///         if let token = tokenProvider() {
+///         if let token = await tokenProvider() {
 ///             modified.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 ///         }
 ///         return modified
@@ -49,14 +33,15 @@ public protocol RequestInterceptor: Sendable {
     /// - Returns: The URLRequest to actually send (can be modified)
     func willSend(_ request: URLRequest) async -> URLRequest
 
-    /// Called after receiving a response (both success and failure).
+    /// Called after receiving a response (any status code).
     ///
     /// - Parameters:
     ///   - response: The URLResponse received
     ///   - data: The response data
     func didReceive(_ response: URLResponse, data: Data) async
 
-    /// Called when a request fails with an error.
+    /// Called when a request fails — transport errors, invalid responses AND
+    /// non-2xx statuses (the mapped `APIError`).
     ///
     /// - Parameters:
     ///   - request: The original request
@@ -80,33 +65,48 @@ public extension RequestInterceptor {
     }
 }
 
-// MARK: - Built-in Interceptors
+// MARK: - Built-in Logging Interceptor
 
-/// Logs all requests and responses to console (DEBUG only).
+/// Logs requests and responses through `os.Logger` (subsystem "CoreNetworking",
+/// category "network").
+///
+/// Privacy rules (not configurable):
+/// - Sensitive headers (Authorization, Cookie, Set-Cookie, api keys, tokens…)
+///   are ALWAYS redacted before logging — there is no opt-out.
+/// - URLs are logged with `.private` privacy: visible while debugging,
+///   redacted in sysdiagnose/console of release builds.
+/// - Bodies are only ever logged in DEBUG builds, and only when opted in.
 ///
 /// ## Example
 /// ```swift
-/// let service = APIService(interceptors: [LoggingInterceptor()])
+/// let service = APIService(configuration: config, interceptors: [LoggingInterceptor()])
 /// ```
 public struct LoggingInterceptor: RequestInterceptor {
     private let includeHeaders: Bool
     private let includeBody: Bool
 
-    public init(includeHeaders: Bool = true, includeBody: Bool = false) {
+    /// - Parameters:
+    ///   - includeHeaders: Log request headers (redacted). Default: `false`.
+    ///   - includeBody: Log bodies (DEBUG builds only). Default: `false`.
+    public init(includeHeaders: Bool = false, includeBody: Bool = false) {
         self.includeHeaders = includeHeaders
         self.includeBody = includeBody
     }
 
     public func willSend(_ request: URLRequest) async -> URLRequest {
-        #if DEBUG
-        print("📤 [REQUEST] \(request.httpMethod ?? "GET") \(request.url?.absoluteString ?? "")")
+        let method = request.httpMethod ?? "GET"
+        let url = request.url?.absoluteString ?? "<no url>"
+        NetLog.network.debug("→ \(method, privacy: .public) \(url, privacy: .private)")
 
         if includeHeaders, let headers = request.allHTTPHeaderFields, !headers.isEmpty {
-            print("   Headers: \(headers)")
+            let redacted = HeaderRedactor.redact(headers)
+            NetLog.network.debug("   headers: \(redacted, privacy: .private)")
         }
 
-        if includeBody, let body = request.httpBody, let json = try? JSONSerialization.jsonObject(with: body) {
-            print("   Body: \(json)")
+        #if DEBUG
+        if includeBody, let body = request.httpBody,
+           let text = String(data: body, encoding: .utf8) {
+            NetLog.network.debug("   body: \(text, privacy: .private)")
         }
         #endif
 
@@ -114,60 +114,28 @@ public struct LoggingInterceptor: RequestInterceptor {
     }
 
     public func didReceive(_ response: URLResponse, data: Data) async {
-        #if DEBUG
-        if let http = response as? HTTPURLResponse {
-            let emoji = (200..<300).contains(http.statusCode) ? "✅" : "❌"
-            print("\(emoji) [RESPONSE] \(http.statusCode) - \(http.url?.absoluteString ?? "")")
+        guard let http = response as? HTTPURLResponse else { return }
+        let url = http.url?.absoluteString ?? "<no url>"
+        NetLog.network.debug("← \(http.statusCode, privacy: .public) \(url, privacy: .private)")
 
-            if includeBody, let json = try? JSONSerialization.jsonObject(with: data) {
-                print("   Body: \(json)")
-            }
+        #if DEBUG
+        if includeBody, let text = String(data: data, encoding: .utf8) {
+            NetLog.network.debug("   body: \(text, privacy: .private)")
         }
         #endif
     }
 
     public func didFail(_ request: URLRequest, error: Error) async {
-        #if DEBUG
-        print("❌ [ERROR] \(request.url?.absoluteString ?? "") - \(error.localizedDescription)")
-        #endif
+        let url = request.url?.absoluteString ?? "<no url>"
+        NetLog.network.error("✗ \(url, privacy: .private) — \(String(describing: error), privacy: .public)")
     }
 }
 
-/// Measures and logs request duration (DEBUG only).
-///
-/// ## Example
-/// ```swift
-/// let service = APIService(interceptors: [PerformanceInterceptor()])
-/// ```
-public actor PerformanceInterceptor: RequestInterceptor {
-    private var requestStartTimes: [URL: Date] = [:]
-
-    public init() {}
-
-    public func willSend(_ request: URLRequest) async -> URLRequest {
-        if let url = request.url {
-            requestStartTimes[url] = Date()
-        }
-        return request
-    }
-
-    public func didReceive(_ response: URLResponse, data: Data) async {
-        #if DEBUG
-        if let url = response.url, let startTime = requestStartTimes[url] {
-            let duration = Date().timeIntervalSince(startTime)
-            print("⏱️ [PERF] \(url.absoluteString) - \(String(format: "%.3f", duration))s")
-            requestStartTimes[url] = nil
-        }
-        #endif
-    }
-
-    public func didFail(_ request: URLRequest, error: Error) async {
-        #if DEBUG
-        if let url = request.url, let startTime = requestStartTimes[url] {
-            let duration = Date().timeIntervalSince(startTime)
-            print("⏱️ [PERF] \(url.absoluteString) - Failed after \(String(format: "%.3f", duration))s")
-            requestStartTimes[url] = nil
-        }
-        #endif
-    }
-}
+// NOTA (decisión documentada): el PerformanceInterceptor anterior se ELIMINÓ en
+// vez de arreglarse. Su contrato (didReceive solo recibe URLResponse + Data) no
+// da identidad de request, así que solo podía correlacionar por URL: dos
+// requests concurrentes a la misma URL se pisaban las mediciones, y su limpieza
+// solo compilaba en DEBUG (leak del diccionario en Release). Medir bien exige
+// cambiar el contrato del interceptor (identidad por request) — rediseño que es
+// decisión del owner. Mientras tanto: Instruments (Network) o un interceptor
+// propio en la app con el contrato que necesite.

@@ -155,6 +155,9 @@ public final class APIService: APIServiceProtocol {
                 guard shouldRetry else { throw error }
 
                 let delay = error.retryAfterDelay ?? retryPolicy.jitteredDelay(for: attemptsMade - 1)
+                NetLog.retry.debug(
+                    "retry \(attemptsMade, privacy: .public)/\(self.retryPolicy.maxAttempts - 1, privacy: .public) en \(String(format: "%.2f", delay), privacy: .public)s — \(String(describing: error), privacy: .public)"
+                )
                 do {
                     try await Task.sleep(for: .seconds(delay))
                 } catch {

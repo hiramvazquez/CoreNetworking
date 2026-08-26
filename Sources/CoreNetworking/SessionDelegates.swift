@@ -28,14 +28,11 @@ final class PinningSessionDelegate: NSObject, URLSessionDelegate {
             return
         }
 
-        // Nota C1: semántica provisional de 2 estados (paridad con el código
-        // anterior). El paso de pinning la sustituye por el modelo de 3 estados
-        // notApplicable/validated/failed.
-        if pinning.validate(serverTrust: serverTrust, forHost: challenge.protectionSpace.host) {
-            completionHandler(.useCredential, URLCredential(trust: serverTrust))
-        } else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-        }
+        // 3 estados: notApplicable → validación TLS por defecto del sistema;
+        // validated → credencial; failed → cancelar. Nunca useCredential a ciegas.
+        let result = pinning.validate(serverTrust: serverTrust, host: challenge.protectionSpace.host)
+        let credential = result == .validated ? URLCredential(trust: serverTrust) : nil
+        completionHandler(result.disposition, credential)
     }
 }
 

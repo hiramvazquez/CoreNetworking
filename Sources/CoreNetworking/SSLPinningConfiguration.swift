@@ -1,98 +1,70 @@
 import Foundation
 import Security
+import CryptoKit
 
-/// Configuration for SSL Certificate Pinning using public keys.
+// MARK: - Validation Result
+
+/// Outcome of evaluating a server trust challenge against the pinning policy.
 ///
-/// SSL Pinning prevents man-in-the-middle attacks by validating that the server's
-/// certificate matches one of your trusted public keys.
+/// Three states, three dispositions — never a blind `.useCredential`:
+/// - `notApplicable`: the host is not pinned (or pinning is disabled) → the
+///   system performs its default TLS validation.
+/// - `validated`: chain and pin checks passed → use the credential.
+/// - `failed`: the connection must be cancelled.
+public enum PinningValidationResult: Sendable, Equatable {
+    case notApplicable
+    case validated
+    case failed
+}
+
+extension PinningValidationResult {
+    /// Maps the validation result to the challenge disposition.
+    var disposition: URLSession.AuthChallengeDisposition {
+        switch self {
+        case .notApplicable: .performDefaultHandling
+        case .validated: .useCredential
+        case .failed: .cancelAuthenticationChallenge
+        }
+    }
+}
+
+// MARK: - Configuration
+
+/// Configuration for TLS public key pinning (SPKI, SHA-256, base64 — the same
+/// pin format as TrustKit / HPKP).
 ///
-/// ## Security Benefits
-/// - Protects against compromised Certificate Authorities
-/// - Prevents man-in-the-middle attacks
-/// - Ensures you're connecting to the expected server
-///
-/// ## Example - Pin Specific Hosts
+/// ## Example
 /// ```swift
 /// let pinning = SSLPinningConfiguration(
-///     publicKeys: [
-///         "base64-encoded-public-key-1",
-///         "base64-encoded-public-key-2"
-///     ],
-///     pinnedHosts: ["api.myapp.com", "cdn.myapp.com"]
+///     publicKeyHashes: ["r/mIkG3eEpVdm+u/ko/cwxzOMo1bk4TyHIlByibiA5E="],
+///     pinnedHosts: ["api.myapp.com"]
 /// )
-///
-/// let service = APIService(sslPinning: pinning)
+/// let service = APIService(configuration: configuration, sslPinning: pinning)
 /// ```
 ///
-/// ## Example - Pin All Hosts
-/// ```swift
-/// let pinning = SSLPinningConfiguration(
-///     publicKeys: ["base64-encoded-public-key"],
-///     pinnedHosts: nil  // Apply to all hosts
-/// )
-/// ```
-///
-/// ## How to Extract Public Keys
-///
-/// ### From Certificate File (.cer, .crt)
+/// ## How to compute a pin
 /// ```bash
-/// # 1. Extract public key from certificate
-/// openssl x509 -in certificate.crt -pubkey -noout > pubkey.pem
-///
-/// # 2. Convert to DER format
-/// openssl rsa -pubin -in pubkey.pem -outform DER -out pubkey.der
-///
-/// # 3. Get base64 hash (SHA256)
-/// openssl dgst -sha256 -binary pubkey.der | openssl base64
+/// openssl s_client -connect api.example.com:443 < /dev/null \
+///   | openssl x509 -pubkey -noout \
+///   | openssl pkey -pubin -outform DER \
+///   | openssl dgst -sha256 -binary | base64
 /// ```
-///
-/// ### From Running Server
-/// ```bash
-/// # 1. Get certificate from server
-/// openssl s_client -connect api.example.com:443 -showcerts < /dev/null | \
-///     openssl x509 -outform PEM > server.pem
-///
-/// # 2. Extract public key
-/// openssl x509 -in server.pem -pubkey -noout > pubkey.pem
-///
-/// # 3. Convert to DER and hash
-/// openssl rsa -pubin -in pubkey.pem -outform DER -out pubkey.der
-/// openssl dgst -sha256 -binary pubkey.der | openssl base64
-/// ```
-public struct SSLPinningConfiguration: Sendable {
-    /// Array of base64-encoded SHA256 hashes of trusted public keys.
-    ///
-    /// These are compared against the server's certificate public key.
-    /// At least one must match for the connection to succeed.
+public struct SSLPinningConfiguration: Sendable, Equatable {
+    /// Base64-encoded SHA-256 hashes of the pinned SubjectPublicKeyInfo (SPKI).
+    /// At least one must match a key in the server's chain.
     public let publicKeyHashes: [String]
 
-    /// Optional list of hosts to apply pinning to.
-    ///
-    /// - If `nil`: Pinning applies to ALL hosts
-    /// - If empty: No pinning is performed
-    /// - If contains hosts: Only those hosts are pinned
-    ///
-    /// ## Example
-    /// ```swift
-    /// pinnedHosts: ["api.myapp.com", "cdn.myapp.com"]
-    /// ```
+    /// Hosts to pin.
+    /// - `nil`: pinning applies to ALL hosts.
+    /// - Empty: no host is pinned (everything is `notApplicable`).
+    /// - Otherwise: only the listed hosts are pinned.
     public let pinnedHosts: Set<String>?
 
-    /// Whether to validate the certificate trust chain before checking pins.
-    ///
-    /// - `true`: Validates trust chain first, then checks pins (recommended)
-    /// - `false`: Only checks pins, skips trust chain validation (not recommended)
-    ///
-    /// **Recommendation**: Keep this `true` for production. Only set to `false`
-    /// if you're using self-signed certificates in development.
+    /// Whether to evaluate the certificate chain (`SecTrustEvaluateWithError`)
+    /// before checking pins. Keep `true` in production; `false` only makes
+    /// sense against self-signed certificates in development.
     public let validateCertificateChain: Bool
 
-    /// Creates an SSL Pinning configuration.
-    ///
-    /// - Parameters:
-    ///   - publicKeyHashes: Base64-encoded SHA256 hashes of trusted public keys
-    ///   - pinnedHosts: Optional set of hosts to apply pinning (nil = all hosts)
-    ///   - validateCertificateChain: Whether to validate trust chain (default: true)
     public init(
         publicKeyHashes: [String],
         pinnedHosts: Set<String>? = nil,
@@ -103,129 +75,110 @@ public struct SSLPinningConfiguration: Sendable {
         self.validateCertificateChain = validateCertificateChain
     }
 
-    /// Validates a server trust challenge against pinned public keys.
-    ///
-    /// - Parameters:
-    ///   - serverTrust: The server trust to validate
-    ///   - host: The host being connected to
-    /// - Returns: `true` if validation succeeds, `false` otherwise
-    public func validate(serverTrust: SecTrust, forHost host: String) -> Bool {
-        // Check if this host should be pinned
-        if let pinnedHosts = pinnedHosts {
-            guard pinnedHosts.contains(host) else {
-                // Host not in pinned list, allow connection
-                return true
-            }
-        }
-
-        // Validate certificate chain first (if enabled)
-        if validateCertificateChain {
-            var error: CFError?
-            guard SecTrustEvaluateWithError(serverTrust, &error) else {
-                #if DEBUG
-                print("❌ [SSL] Certificate chain validation failed: \(error?.localizedDescription ?? "unknown")")
-                #endif
-                return false
-            }
-        }
-
-        // Extract server's public keys
-        let serverPublicKeys = extractPublicKeys(from: serverTrust)
-
-        // Check if any server public key matches our pinned keys
-        for serverKey in serverPublicKeys {
-            let serverKeyHash = sha256Hash(of: serverKey)
-            let serverKeyHashBase64 = serverKeyHash.base64EncodedString()
-
-            if publicKeyHashes.contains(serverKeyHashBase64) {
-                #if DEBUG
-                print("✅ [SSL] Public key matched for host: \(host)")
-                #endif
-                return true
-            }
-        }
-
-        #if DEBUG
-        print("❌ [SSL] No matching public key found for host: \(host)")
-        print("   Server keys: \(serverPublicKeys.map { sha256Hash(of: $0).base64EncodedString() })")
-        print("   Expected keys: \(publicKeyHashes)")
-        #endif
-
-        return false
-    }
-
-    // MARK: - Private Helpers
-
-    /// Extracts public keys from a server trust object.
-    private func extractPublicKeys(from serverTrust: SecTrust) -> [SecKey] {
-        var publicKeys: [SecKey] = []
-
-        if let certificates = SecTrustCopyCertificateChain(serverTrust) as? [SecCertificate] {
-            for certificate in certificates {
-                if let publicKey = SecCertificateCopyKey(certificate) {
-                    publicKeys.append(publicKey)
-                }
-            }
-        }
-
-        return publicKeys
-    }
-
-    /// Computes SHA256 hash of a public key.
-    private func sha256Hash(of publicKey: SecKey) -> Data {
-        guard let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, nil) as Data? else {
-            return Data()
-        }
-
-        var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
-        publicKeyData.withUnsafeBytes { buffer in
-            _ = CC_SHA256(buffer.baseAddress, CC_LONG(publicKeyData.count), &hash)
-        }
-
-        return Data(hash)
-    }
-}
-
-// MARK: - CommonCrypto Import
-
-#if canImport(CommonCrypto)
-import CommonCrypto
-#else
-// For platforms without CommonCrypto, use CryptoKit
-import CryptoKit
-
-extension SSLPinningConfiguration {
-    private func sha256Hash(of publicKey: SecKey) -> Data {
-        guard let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, nil) as Data? else {
-            return Data()
-        }
-
-        let hash = SHA256.hash(data: publicKeyData)
-        return Data(hash)
-    }
-}
-#endif
-
-// MARK: - Disabled Pinning
-
-public extension SSLPinningConfiguration {
-    /// Disabled SSL pinning (no validation performed).
-    ///
-    /// **Warning**: Only use this for development/testing.
-    /// Never disable SSL pinning in production builds.
-    static let disabled = SSLPinningConfiguration(
+    /// Pinning disabled: every host is `notApplicable`, so the system performs
+    /// its DEFAULT TLS validation for everything. It never blindly accepts.
+    public static let disabled = SSLPinningConfiguration(
         publicKeyHashes: [],
-        pinnedHosts: Set(),
+        pinnedHosts: [],
         validateCertificateChain: true
     )
+
+    // MARK: Pure decision core (testable without network or SecTrust)
+
+    /// Whether `host` requires pinning under this configuration.
+    public func requiresPinning(host: String) -> Bool {
+        guard !publicKeyHashes.isEmpty else { return false }
+        guard let pinnedHosts else { return true }
+        return pinnedHosts.contains(host)
+    }
+
+    /// Pure 3-state decision. The autoclosures keep chain evaluation and key
+    /// hashing lazy: neither runs when the host is not pinned, and the chain
+    /// is not evaluated when `validateCertificateChain` is false.
+    func decision(
+        host: String,
+        chainTrusted: @autoclosure () -> Bool,
+        serverKeyHashes: @autoclosure () -> [String]
+    ) -> PinningValidationResult {
+        guard requiresPinning(host: host) else { return .notApplicable }
+        if validateCertificateChain, !chainTrusted() { return .failed }
+        let pinned = Set(publicKeyHashes)
+        return serverKeyHashes().contains(where: pinned.contains) ? .validated : .failed
+    }
+
+    // MARK: Real evaluation
+
+    /// Evaluates a server trust for `host` against this configuration.
+    public func validate(serverTrust: SecTrust, host: String) -> PinningValidationResult {
+        decision(
+            host: host,
+            chainTrusted: Self.evaluateChain(serverTrust),
+            serverKeyHashes: Self.spkiHashes(from: serverTrust)
+        )
+    }
+
+    private static func evaluateChain(_ serverTrust: SecTrust) -> Bool {
+        var error: CFError?
+        return SecTrustEvaluateWithError(serverTrust, &error)
+    }
+
+    private static func spkiHashes(from serverTrust: SecTrust) -> [String] {
+        guard let certificates = SecTrustCopyCertificateChain(serverTrust) as? [SecCertificate] else {
+            return []
+        }
+        return certificates.compactMap { certificate in
+            SecCertificateCopyKey(certificate).flatMap(SPKIHasher.sha256Base64(of:))
+        }
+    }
 }
 
-// MARK: - Equatable
+// MARK: - SPKI Hasher
 
-extension SSLPinningConfiguration: Equatable {
-    public static func == (lhs: SSLPinningConfiguration, rhs: SSLPinningConfiguration) -> Bool {
-        lhs.publicKeyHashes == rhs.publicKeyHashes &&
-        lhs.pinnedHosts == rhs.pinnedHosts &&
-        lhs.validateCertificateChain == rhs.validateCertificateChain
+/// Computes the standard SPKI SHA-256 pin of a public key: SHA-256 over the
+/// DER SubjectPublicKeyInfo, reconstructed as ASN.1 header + the key's
+/// external representation (X9.63 for EC, PKCS#1 for RSA).
+enum SPKIHasher {
+    /// Standard ASN.1 SPKI headers per key type/size (same table as TrustKit).
+    private static let asn1Headers: [Header: [UInt8]] = [
+        Header(keyType: kSecAttrKeyTypeRSA as String, keySizeInBits: 2048): [
+            0x30, 0x82, 0x01, 0x22, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
+            0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00, 0x03, 0x82, 0x01, 0x0f, 0x00
+        ],
+        Header(keyType: kSecAttrKeyTypeRSA as String, keySizeInBits: 4096): [
+            0x30, 0x82, 0x02, 0x22, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
+            0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00, 0x03, 0x82, 0x02, 0x0f, 0x00
+        ],
+        Header(keyType: kSecAttrKeyTypeECSECPrimeRandom as String, keySizeInBits: 256): [
+            0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02,
+            0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03,
+            0x42, 0x00
+        ],
+        Header(keyType: kSecAttrKeyTypeECSECPrimeRandom as String, keySizeInBits: 384): [
+            0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02,
+            0x01, 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00
+        ]
+    ]
+
+    private struct Header: Hashable {
+        let keyType: String
+        let keySizeInBits: Int
+    }
+
+    /// Base64 SHA-256 SPKI pin of `publicKey`, or `nil` when the key type/size
+    /// is unsupported (unsupported keys can never match a pin — fail closed).
+    static func sha256Base64(of publicKey: SecKey) -> String? {
+        guard
+            let attributes = SecKeyCopyAttributes(publicKey) as? [CFString: Any],
+            let keyType = attributes[kSecAttrKeyType] as? String,
+            let keySizeInBits = attributes[kSecAttrKeySizeInBits] as? Int,
+            let header = asn1Headers[Header(keyType: keyType, keySizeInBits: keySizeInBits)],
+            let keyData = SecKeyCopyExternalRepresentation(publicKey, nil) as Data?
+        else {
+            return nil
+        }
+
+        var spki = Data(header)
+        spki.append(keyData)
+        return Data(SHA256.hash(data: spki)).base64EncodedString()
     }
 }

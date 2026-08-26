@@ -1,0 +1,12 @@
+/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/Sources/CoreNetworking/APIError.swift
+/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/Sources/CoreNetworking/APIService.swift
+/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/Sources/CoreNetworking/BaseRequest.swift
+/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/Sources/CoreNetworking/BaseResponse.swift
+/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/Sources/CoreNetworking/Configuration/NetworkingConfiguration.swift
+/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/Sources/CoreNetworking/Mocks/MockAPIHelper.swift
+/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/Sources/CoreNetworking/Mocks/MockAPIService.swift
+/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/Sources/CoreNetworking/Mocks/MockURLProtocol.swift
+/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/Sources/CoreNetworking/RequestInterceptor.swift
+/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/Sources/CoreNetworking/RetryPolicy.swift
+/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/Sources/CoreNetworking/SSLPinningConfiguration.swift
+/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/Sources/CoreNetworking/UserPresentableError.swift

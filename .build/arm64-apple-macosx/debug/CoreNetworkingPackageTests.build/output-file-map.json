@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/.build/arm64-apple-macosx/debug/CoreNetworkingPackageTests.build/primary.swiftdeps"
+  },
+  "/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/.build/arm64-apple-macosx/debug/CoreNetworkingPackageTests.derived/runner.swift": {
+    "dependencies": "/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/.build/arm64-apple-macosx/debug/CoreNetworkingPackageTests.build/runner.d",
+    "object": "/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/.build/arm64-apple-macosx/debug/CoreNetworkingPackageTests.build/runner.swift.o",
+    "swiftmodule": "/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/.build/arm64-apple-macosx/debug/CoreNetworkingPackageTests.build/runner~partial.swiftmodule",
+    "swift-dependencies": "/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/.build/arm64-apple-macosx/debug/CoreNetworkingPackageTests.build/runner.swiftdeps",
+    "diagnostics": "/Users/hiram/Desktop/PROYECTOS/spm-pro/CoreNetworking/.build/arm64-apple-macosx/debug/CoreNetworkingPackageTests.build/runner.dia"
+  }
+}

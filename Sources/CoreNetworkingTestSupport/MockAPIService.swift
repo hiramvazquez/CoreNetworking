@@ -1,5 +1,5 @@
-#if canImport(XCTest) || DEBUG
 import Foundation
+import CoreNetworking
 import os
 
 /// In-memory stub of `APIServiceProtocol` for unit-testing consumers.
@@ -60,4 +60,3 @@ public final class MockAPIService: APIServiceProtocol, @unchecked Sendable {
         throw APIError.invalidResponse
     }
 }
-#endif

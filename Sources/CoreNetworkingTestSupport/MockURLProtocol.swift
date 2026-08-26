@@ -1,5 +1,5 @@
-#if canImport(XCTest) || DEBUG
 import Foundation
+import CoreNetworking
 import os
 
 // MARK: - MockResponse
@@ -180,4 +180,3 @@ public final class MockURLProtocol: URLProtocol {
         client?.urlProtocolDidFinishLoading(self)
     }
 }
-#endif

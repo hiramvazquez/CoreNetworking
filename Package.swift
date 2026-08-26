@@ -16,16 +16,24 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .library(name: "CoreNetworking", targets: ["CoreNetworking"])
+        .library(name: "CoreNetworking", targets: ["CoreNetworking"]),
+        // Mocks y helpers de test: producto SEPARADO para que jamás viajen en
+        // el binario de producción. Solo lo enlazan test targets y previews.
+        .library(name: "CoreNetworkingTestSupport", targets: ["CoreNetworkingTestSupport"])
     ],
     targets: [
         .target(
             name: "CoreNetworking",
             swiftSettings: swiftSettings
         ),
+        .target(
+            name: "CoreNetworkingTestSupport",
+            dependencies: ["CoreNetworking"],
+            swiftSettings: swiftSettings
+        ),
         .testTarget(
             name: "CoreNetworkingTests",
-            dependencies: ["CoreNetworking"],
+            dependencies: ["CoreNetworking", "CoreNetworkingTestSupport"],
             swiftSettings: swiftSettings
         )
     ],

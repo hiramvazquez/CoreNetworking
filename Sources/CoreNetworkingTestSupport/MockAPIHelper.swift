@@ -1,5 +1,5 @@
-#if canImport(XCTest) || DEBUG
 import Foundation
+import CoreNetworking
 
 /// Convenience helpers over `MockURLProtocol.register`.
 ///
@@ -55,4 +55,3 @@ public enum MockAPIHelper {
         MockURLProtocol.removeAll()
     }
 }
-#endif

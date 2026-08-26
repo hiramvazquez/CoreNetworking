@@ -238,36 +238,6 @@ public extension BaseRequest {
     }
 }
 
-// MARK: - Mockable Request Protocol
-
-/// Protocol for requests that provide mock data for testing
-///
-/// Implement this protocol to enable automatic mock data injection
-/// in test and preview environments.
-///
-/// ## Example
-/// ```swift
-/// struct GetGamesRequest: BaseRequest, MockableRequest {
-///     // ... BaseRequest conformance
-///
-///     var mockedData: Data? {
-///         """
-///         [
-///             {"id": 1, "title": "Test Game 1"},
-///             {"id": 2, "title": "Test Game 2"}
-///         ]
-///         """.data(using: .utf8)
-///     }
-/// }
-/// ```
-public protocol MockableRequest {
-    /// Mock response data for testing
-    ///
-    /// Return JSON data that matches your response model.
-    /// This will only be used in test/preview environments.
-    var mockedData: Data? { get }
-}
-
 // MARK: - Request Description
 
 public extension BaseRequest {

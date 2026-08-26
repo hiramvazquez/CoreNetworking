@@ -1,5 +1,6 @@
 import XCTest
 @testable import CoreNetworking
+import CoreNetworkingTestSupport
 
 final class NetworkingTests: XCTestCase {
     func testMockedResponse() async throws {

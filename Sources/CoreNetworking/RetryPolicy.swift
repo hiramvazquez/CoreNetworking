@@ -2,53 +2,50 @@ import Foundation
 
 /// Configuration for automatic request retry behavior.
 ///
-/// Retry policies determine when and how failed requests should be retried.
-/// By default, only retryable errors (network timeouts, 5xx errors) are retried.
+/// `maxAttempts` counts TOTAL requests, including the first one:
+/// `maxAttempts: 3` means at most 3 requests hit the network.
 ///
-/// ## Example - Default Policy
-/// ```swift
-/// let policy = RetryPolicy(maxAttempts: 3)
-/// let service = APIService(retryPolicy: policy)
-/// ```
+/// Only idempotent HTTP methods are retried by default; non-idempotent
+/// requests (POST/PATCH) must opt in per-request via
+/// `BaseRequest.allowsNonIdempotentRetry`.
 ///
-/// ## Example - Custom Backoff
-/// ```swift
-/// let policy = RetryPolicy(
-///     maxAttempts: 5,
-///     initialDelay: 1.0,
-///     maxDelay: 30.0,
-///     multiplier: 3.0
-/// )
-/// ```
+/// Backoff is exponential with equal jitter, and a server-provided
+/// `Retry-After` (seconds or HTTP-date) takes precedence over the computed
+/// delay.
 ///
-/// ## Example - No Retry
+/// ## Example
 /// ```swift
-/// let policy = RetryPolicy.noRetry
+/// let policy = RetryPolicy(maxAttempts: 3)          // hasta 3 requests
+/// let none = RetryPolicy.noRetry                    // exactamente 1 request
 /// ```
 public struct RetryPolicy: Sendable {
-    /// Maximum number of retry attempts (0 = no retry, 1 = one retry, etc.)
+    /// Maximum TOTAL number of requests (including the first). Always ≥ 1.
     public let maxAttempts: Int
 
-    /// Initial delay before first retry (in seconds)
+    /// Base delay before the first retry (in seconds).
     public let initialDelay: TimeInterval
 
-    /// Maximum delay between retries (in seconds)
+    /// Cap for the computed delay (in seconds).
     public let maxDelay: TimeInterval
 
-    /// Multiplier for exponential backoff (delay *= multiplier after each retry)
+    /// Multiplier for exponential backoff.
     public let multiplier: Double
 
-    /// Custom logic to determine if an error should be retried
+    /// Custom logic to decide whether a failure should be retried.
+    ///
+    /// Receives the error and the number of attempts already made
+    /// (1 = the first request just failed).
     public let shouldRetry: @Sendable (Error, Int) -> Bool
 
-    /// Creates a retry policy with exponential backoff.
+    /// Creates a retry policy with exponential backoff + jitter.
     ///
     /// - Parameters:
-    ///   - maxAttempts: Maximum retry attempts (default: 3)
-    ///   - initialDelay: Initial delay in seconds (default: 0.5)
-    ///   - maxDelay: Maximum delay in seconds (default: 16.0)
+    ///   - maxAttempts: Total requests allowed (default: 3). Values < 1 are
+    ///     clamped to 1 — "cero requests" no es un estado representable.
+    ///   - initialDelay: Base delay in seconds (default: 0.5)
+    ///   - maxDelay: Delay cap in seconds (default: 16.0)
     ///   - multiplier: Backoff multiplier (default: 2.0)
-    ///   - shouldRetry: Custom retry logic (default: retry only APIError.isRetryable)
+    ///   - shouldRetry: Custom retry predicate (default: `APIError.isRetryable`)
     public init(
         maxAttempts: Int = 3,
         initialDelay: TimeInterval = 0.5,
@@ -56,40 +53,49 @@ public struct RetryPolicy: Sendable {
         multiplier: Double = 2.0,
         shouldRetry: @escaping @Sendable (Error, Int) -> Bool = Self.defaultShouldRetry
     ) {
-        self.maxAttempts = maxAttempts
+        self.maxAttempts = Swift.max(1, maxAttempts)
         self.initialDelay = initialDelay
         self.maxDelay = maxDelay
         self.multiplier = multiplier
         self.shouldRetry = shouldRetry
     }
 
-    /// Calculates the delay before the next retry attempt.
+    /// Deterministic exponential backoff: `min(initialDelay * multiplier^attempt, maxDelay)`.
     ///
-    /// Uses exponential backoff: delay = min(initialDelay * multiplier^attempt, maxDelay)
-    ///
-    /// - Parameter attempt: The current attempt number (0-indexed)
-    /// - Returns: Delay in seconds before next retry
-    public func delay(for attempt: Int) -> TimeInterval {
-        let exponentialDelay = initialDelay * pow(multiplier, Double(attempt))
-        return min(exponentialDelay, maxDelay)
+    /// - Parameter attempt: 0-based retry index (0 = delay before the 1st retry)
+    public func baseDelay(for attempt: Int) -> TimeInterval {
+        min(initialDelay * pow(multiplier, Double(attempt)), maxDelay)
     }
 
-    /// Default retry logic: only retry if APIError.isRetryable returns true.
+    /// Backoff with equal jitter: `base/2 + random(0 ... base/2)`.
+    ///
+    /// Evita que N clientes que fallaron a la vez reintenten sincronizados.
+    public func jitteredDelay(
+        for attempt: Int,
+        using generator: inout some RandomNumberGenerator
+    ) -> TimeInterval {
+        let base = baseDelay(for: attempt)
+        guard base > 0 else { return 0 }
+        return base / 2 + TimeInterval.random(in: 0...(base / 2), using: &generator)
+    }
+
+    /// Backoff with equal jitter using the system RNG.
+    public func jitteredDelay(for attempt: Int) -> TimeInterval {
+        var generator = SystemRandomNumberGenerator()
+        return jitteredDelay(for: attempt, using: &generator)
+    }
+
+    /// Default retry predicate: retry only when `APIError.isRetryable`.
     public static func defaultShouldRetry(_ error: Error, _ attempt: Int) -> Bool {
-        if let apiError = error as? APIError {
-            return apiError.isRetryable
-        }
-        return false
+        (error as? APIError)?.isRetryable ?? false
     }
 
     // MARK: - Predefined Policies
 
-    /// No retry policy (fails immediately on error).
-    public static let noRetry = RetryPolicy(maxAttempts: 0)
+    /// Exactly one request, no retries.
+    public static let noRetry = RetryPolicy(maxAttempts: 1)
 
-    /// Aggressive retry policy (5 attempts, longer delays).
-    ///
-    /// Useful for critical operations or unstable networks.
+    /// Aggressive: up to 5 total requests, longer delays.
     public static let aggressive = RetryPolicy(
         maxAttempts: 5,
         initialDelay: 1.0,
@@ -97,9 +103,7 @@ public struct RetryPolicy: Sendable {
         multiplier: 2.0
     )
 
-    /// Conservative retry policy (2 attempts, short delays).
-    ///
-    /// Useful for user-facing operations where speed matters.
+    /// Conservative: up to 2 total requests, short delays.
     public static let conservative = RetryPolicy(
         maxAttempts: 2,
         initialDelay: 0.25,
@@ -111,6 +115,8 @@ public struct RetryPolicy: Sendable {
 // MARK: - Equatable
 
 extension RetryPolicy: Equatable {
+    /// Equality over the numeric configuration; `shouldRetry` (a closure)
+    /// deliberately cannot participate.
     public static func == (lhs: RetryPolicy, rhs: RetryPolicy) -> Bool {
         lhs.maxAttempts == rhs.maxAttempts &&
         lhs.initialDelay == rhs.initialDelay &&

@@ -132,26 +132,34 @@ public final class APIService: APIServiceProtocol {
     ///
     /// Pipeline per attempt: build URLRequest → interceptors `willSend` →
     /// transport → interceptors `didReceive` → status validation.
+    ///
+    /// Retry rules:
+    /// - `retryPolicy.maxAttempts` counts TOTAL requests (3 ⇒ 3 requests).
+    /// - Only idempotent methods retry by default; POST/PATCH need the
+    ///   request's `allowsNonIdempotentRetry` opt-in.
+    /// - A server `Retry-After` takes precedence over the jittered backoff.
     private func performWithRetry<Request: BaseRequest>(
         _ request: Request,
         transport: (URLRequest) async throws -> (Data, URLResponse)
     ) async throws(APIError) -> (data: Data, response: HTTPURLResponse) {
-        var attempt = 0
+        let methodAllowsRetry = request.method.isIdempotent || request.allowsNonIdempotentRetry
+        var attemptsMade = 0
         while true {
             do {
                 return try await performOnce(request, transport: transport)
             } catch {
-                let shouldRetry = attempt < retryPolicy.maxAttempts &&
-                                  retryPolicy.shouldRetry(error, attempt)
+                attemptsMade += 1
+                let shouldRetry = attemptsMade < retryPolicy.maxAttempts &&
+                                  methodAllowsRetry &&
+                                  retryPolicy.shouldRetry(error, attemptsMade)
                 guard shouldRetry else { throw error }
 
-                let delay = retryPolicy.delay(for: attempt)
+                let delay = error.retryAfterDelay ?? retryPolicy.jitteredDelay(for: attemptsMade - 1)
                 do {
                     try await Task.sleep(for: .seconds(delay))
                 } catch {
                     throw APIError.cancelled
                 }
-                attempt += 1
             }
         }
     }

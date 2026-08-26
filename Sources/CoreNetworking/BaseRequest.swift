@@ -10,6 +10,17 @@ import Foundation
 /// HTTP methods supported by the API
 public enum HTTPMethod: String, Sendable {
     case GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS
+
+    /// Whether the method is idempotent per RFC 9110 (safe to retry).
+    ///
+    /// POST and PATCH are not: retrying them can duplicate effects, so they
+    /// only retry when the request opts in (`allowsNonIdempotentRetry`).
+    public var isIdempotent: Bool {
+        switch self {
+        case .GET, .HEAD, .PUT, .DELETE, .OPTIONS: true
+        case .POST, .PATCH: false
+        }
+    }
 }
 
 /// Protocol for request parameters that can be encoded to JSON
@@ -118,6 +129,13 @@ public protocol BaseRequest: Sendable {
     /// Override to customize timeout for slow endpoints.
     /// Default is 30 seconds.
     var timeoutInterval: TimeInterval { get }
+
+    /// Opt-in to retry non-idempotent methods (POST/PATCH).
+    ///
+    /// Default is `false`: retrying a non-idempotent request can duplicate its
+    /// effect (double charge, double insert). Set `true` ONLY when the
+    /// endpoint is safe to repeat (e.g. idempotency keys server-side).
+    var allowsNonIdempotentRetry: Bool { get }
 }
 
 // MARK: - Default Implementations
@@ -141,6 +159,11 @@ public extension BaseRequest {
     /// Default timeout: 30 seconds
     var timeoutInterval: TimeInterval {
         30.0
+    }
+
+    /// Default: non-idempotent methods are NOT retried.
+    var allowsNonIdempotentRetry: Bool {
+        false
     }
 }
 

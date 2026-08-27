@@ -198,6 +198,16 @@ let service = APIService(configuration: configuration)
   consumidores (configura `result` o `error`).
 - Nada de esto viaja en el binario de producción: es un producto aparte.
 
+> **Ojo al scheme si tienes CI.** Al existir dos productos, SPM ya no genera un scheme
+> `CoreNetworking` con acción de test: el agregado es **`CoreNetworking-Package`**.
+>
+> ```bash
+> xcodebuild test -scheme CoreNetworking-Package -destination "platform=iOS Simulator,name=iPhone 17"
+> ```
+>
+> Un script que siga usando `-scheme CoreNetworking` falla con *"not currently configured
+> for the test action"* — y falla de forma que parece un problema de la suite, no del scheme.
+
 ## Arquitectura
 
 ```

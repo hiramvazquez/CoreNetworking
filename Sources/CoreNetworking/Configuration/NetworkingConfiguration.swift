@@ -45,6 +45,19 @@ public struct NetworkingConfiguration: Sendable {
     /// Pensado para inyectar mocks en tests/previews. `nil` = tráfico real.
     public let protocolClasses: [URLProtocol.Type]?
 
+    /// Fábrica del `JSONDecoder` con el que se decodifican las respuestas.
+    ///
+    /// Es del CONSUMIDOR, no del paquete: cada backend tiene su convención de
+    /// claves y de fechas, y sin esto había que repetir `CodingKeys` en cada DTO
+    /// —o decodificar las fechas a `String` y convertirlas a mano—. Lo pidió la
+    /// primera app que consumió el paquete de verdad.
+    ///
+    /// Es una FÁBRICA y no un `JSONDecoder` porque `JSONDecoder` es una clase
+    /// mutable y no `Sendable`: compartir una instancia entre peticiones
+    /// concurrentes sería una carrera de datos que el compilador no puede ver.
+    /// Se crea uno por decode, que es lo que ya se hacía.
+    public let makeDecoder: @Sendable () -> JSONDecoder
+
     /// Crea una configuración de red.
     ///
     /// - Precondition: `baseURL` debe tener scheme y host. Se valida con
@@ -56,7 +69,8 @@ public struct NetworkingConfiguration: Sendable {
         baseURL: URL,
         defaultHeaders: [String: String] = [:],
         environment: String = "production",
-        protocolClasses: [URLProtocol.Type]? = nil
+        protocolClasses: [URLProtocol.Type]? = nil,
+        makeDecoder: @escaping @Sendable () -> JSONDecoder = { JSONDecoder() }
     ) {
         precondition(
             baseURL.scheme != nil && baseURL.host != nil,
@@ -66,5 +80,6 @@ public struct NetworkingConfiguration: Sendable {
         self.defaultHeaders = defaultHeaders
         self.environment = environment
         self.protocolClasses = protocolClasses
+        self.makeDecoder = makeDecoder
     }
 }

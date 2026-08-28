@@ -73,7 +73,7 @@ public final class APIService: APIServiceProtocol {
         let (data, _) = try await performWithRetry(request) { [session] urlRequest in
             try await session.data(for: urlRequest)
         }
-        return try Self.decode(Response.self, from: data)
+        return try Self.decode(Response.self, from: data, using: configuration.makeDecoder)
     }
 
     // MARK: - Upload
@@ -91,7 +91,7 @@ public final class APIService: APIServiceProtocol {
             let taskDelegate = progress.map { UploadProgressDelegate(onProgress: $0) }
             return try await session.upload(for: urlRequest, from: uploadData, delegate: taskDelegate)
         }
-        return try Self.decode(Response.self, from: data)
+        return try Self.decode(Response.self, from: data, using: configuration.makeDecoder)
     }
 
     // MARK: - Download
@@ -219,10 +219,11 @@ public final class APIService: APIServiceProtocol {
 
     private static func decode<Response: Decodable>(
         _ type: Response.Type,
-        from data: Data
+        from data: Data,
+        using makeDecoder: @Sendable () -> JSONDecoder
     ) throws(APIError) -> Response {
         do {
-            return try JSONDecoder().decode(Response.self, from: data)
+            return try makeDecoder().decode(Response.self, from: data)
         } catch let decodingError as DecodingError {
             throw APIError.decodingError(decodingError)
         } catch {

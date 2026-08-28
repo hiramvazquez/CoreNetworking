@@ -51,6 +51,33 @@ let configuration = NetworkingConfiguration(
 let service = APIService(configuration: configuration)
 ```
 
+### El decoder es tuyo
+
+Cada backend tiene su convención de claves y de fechas, así que el `JSONDecoder`
+lo pones tú. Sin esto había que repetir `CodingKeys` en cada DTO —o decodificar
+las fechas a `String` y convertirlas a mano—, que es trabajo que una línea
+resuelve:
+
+```swift
+let configuration = NetworkingConfiguration(
+    baseURL: URL(string: "https://api.miapp.com")!,
+    makeDecoder: {
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        d.dateDecodingStrategy = .iso8601
+        return d
+    }
+)
+```
+
+Es una **fábrica** y no un `JSONDecoder` a propósito: `JSONDecoder` es una clase
+mutable y no `Sendable`, así que compartir una instancia entre peticiones
+concurrentes sería una carrera de datos que el compilador no puede ver. Se crea
+uno por decode, que es lo que ya se hacía.
+
+Si no pasas nada, el comportamiento es el de siempre: `JSONDecoder()` sin
+configurar, o sea claves literales y fechas como número.
+
 `NetworkingConfiguration` es un struct inmutable `Sendable`. Una `baseURL` sin
 scheme/host es un error de programación y falla en construcción (precondición),
 no en el primer request.
@@ -193,7 +220,15 @@ let service = APIService(configuration: configuration)
 
 - Registro síncrono, matching por método+URL, respuestas reutilizables,
   `recordedRequests` para asertar conteos/headers, `latency` opcional para
-  probar cancelación. `MockURLProtocol.removeAll()` limpia entre tests.
+  probar cancelación.
+- **Aísla por URL, no con `removeAll()`.** El registro es estático y compartido,
+  y Swift Testing paraleliza las suites por defecto: un `removeAll()` en tu test
+  borra los mocks de las suites que corren a la vez y las deja en rojo por algo
+  que no tiene nada que ver con lo que probaban. Pasó de verdad —cinco tests de
+  cancelación ajenos— y el fallo costaba entender. Usa **un host distinto por
+  test** (`https://mi-caso.test`), que es lo que de verdad aísla porque el
+  matching es por URL exacta. `removeAll()` sigue existiendo para el caso en que
+  controlas toda la ejecución, p. ej. bajo `@Suite(.serialized)`.
 - `MockAPIService` es un stub de `APIServiceProtocol` para tests de
   consumidores (configura `result` o `error`).
 - Nada de esto viaja en el binario de producción: es un producto aparte.

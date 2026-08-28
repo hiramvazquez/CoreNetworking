@@ -1,0 +1,7 @@
+
+# Mutation testing: la cache y el reporte son artefactos de cada corrida.
+# La CONFIGURACION si se versiona: es la que hace reproducible la medicion.
+.swift-mutation-testing-cache/
+mutation-report.json
+mutation-report.html
+sonar-mutation-report.json

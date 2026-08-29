@@ -36,6 +36,8 @@ public enum TransportError: Error, Equatable, Sendable, CaseIterable {
             self = Self.mapearEstado(codigo)
 
         case .certificateValidationFailed:
+            // El pinning rechazó el certificado. NO se degrada a `.unknown` ni
+            // se silencia: es la señal de que algo se interpuso en la conexión.
             self = .connectionInterrupted
 
         case .invalidURL, .invalidResponse, .encodingError, .unknown,

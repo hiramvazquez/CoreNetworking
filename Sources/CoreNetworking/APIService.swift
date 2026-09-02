@@ -2,13 +2,15 @@ import Foundation
 
 /// Production API service.
 ///
-/// - One `URLSession` owned by the service, created in `init` with a dedicated
-///   delegate object for SSL pinning (never `self`).
-/// - Upload/download use the native async URLSession APIs: cancelling the task
-///   cancels the transfer, and both go through the same pipeline as `execute`
-///   (interceptors + retry + error mapping).
-/// - No test/mock heuristics: mock `URLProtocol` classes are injected through
-///   `NetworkingConfiguration.protocolClasses`.
+/// - No `URLSession` of its own: every request goes through an injected
+///   `HTTPTransport` (`URLSessionTransport` by default via the convenience
+///   `init`, `InMemoryTransport` in unit tests). The transport — not this
+///   type — owns the session and its lifetime.
+/// - Upload/download go through the same transport and pipeline as `execute`
+///   (interceptors + retry + error mapping); cancelling the task cancels the
+///   transfer.
+/// - Retry sleeps through an injected `Clock<Duration>` (`ContinuousClock` by
+///   default, `ManualClock` in tests) — no real wall-clock waits in tests.
 /// - Every public method throws `APIError` (typed throws).
 ///
 /// ## Example
@@ -22,47 +24,63 @@ import Foundation
 /// ```
 public final class APIService: APIServiceProtocol {
     private let configuration: NetworkingConfiguration
-    private let session: URLSession
+    private let transport: any HTTPTransport
     private let retryPolicy: RetryPolicy
     private let interceptors: [any RequestInterceptor]
+    private let clock: any Clock<Duration>
 
-    /// Creates an API service.
+    /// Creates an API service with an explicit transport.
+    ///
+    /// This is the designated init: `transport` has no default because the
+    /// choice belongs to the consumer — production code picks
+    /// `URLSessionTransport` (or use the `sslPinning:` convenience `init`
+    /// below), tests pick `InMemoryTransport`.
     ///
     /// - Parameters:
-    ///   - configuration: Immutable networking configuration (base URL, default
-    ///     headers, optional mock protocol classes). Required — there is no
-    ///     global fallback.
+    ///   - configuration: Immutable networking configuration (base URL,
+    ///     default headers, decoder factory). Required — there is no global
+    ///     fallback.
+    ///   - transport: What actually sends the request. No default.
     ///   - retryPolicy: Retry configuration.
     ///   - interceptors: Request/Response interceptors (invoked in order).
-    ///   - sslPinning: SSL pinning configuration (default: none — system TLS
-    ///     validation only).
+    ///   - clock: Clock used to sleep between retries (default:
+    ///     `ContinuousClock()`). Inject a `ManualClock` in tests to advance
+    ///     backoff without waiting on the wall clock.
     public init(
+        configuration: NetworkingConfiguration,
+        transport: any HTTPTransport,
+        retryPolicy: RetryPolicy = RetryPolicy(),
+        interceptors: [any RequestInterceptor] = [],
+        clock: any Clock<Duration> = ContinuousClock()
+    ) {
+        self.configuration = configuration
+        self.transport = transport
+        self.retryPolicy = retryPolicy
+        self.interceptors = interceptors
+        self.clock = clock
+    }
+
+    /// Convenience: builds a `URLSessionTransport` from `configuration` and
+    /// `sslPinning` — same call shape as before `HTTPTransport` existed.
+    ///
+    /// - Parameter sslPinning: SSL pinning configuration (default: none —
+    ///   system TLS validation only).
+    public convenience init(
         configuration: NetworkingConfiguration,
         retryPolicy: RetryPolicy = RetryPolicy(),
         interceptors: [any RequestInterceptor] = [],
         sslPinning: SSLPinningConfiguration? = nil
     ) {
-        self.configuration = configuration
-        self.retryPolicy = retryPolicy
-        self.interceptors = interceptors
-
         let sessionConfiguration = URLSessionConfiguration.default
         if let protocolClasses = configuration.protocolClasses {
             sessionConfiguration.protocolClasses = protocolClasses
         }
-        // Una sola sesión, creada aquí, con un objeto delegate propio (no self).
-        // La sesión retiene a su delegate hasta que se invalida (ver deinit).
-        self.session = URLSession(
-            configuration: sessionConfiguration,
-            delegate: PinningSessionDelegate(pinning: sslPinning),
-            delegateQueue: nil
+        self.init(
+            configuration: configuration,
+            transport: URLSessionTransport(configuration: sessionConfiguration, pinning: sslPinning),
+            retryPolicy: retryPolicy,
+            interceptors: interceptors
         )
-    }
-
-    deinit {
-        // La URLSession retiene fuerte a su delegate; sin esto, sesión y delegate
-        // se fugan al soltar el servicio.
-        session.finishTasksAndInvalidate()
     }
 
     // MARK: - Execute
@@ -70,8 +88,8 @@ public final class APIService: APIServiceProtocol {
     public func execute<Request: BaseRequest, Response: Decodable>(
         request: Request
     ) async throws(APIError) -> Response {
-        let (data, response, summary) = try await performWithRetry(request) { [session] urlRequest in
-            try await session.data(for: urlRequest)
+        let (data, response, summary) = try await performWithRetry(request) { [transport] urlRequest in
+            try await transport.send(urlRequest, progress: nil)
         }
         return try Self.decode(Response.self, from: data, request: summary, response: response, using: configuration.makeDecoder)
     }
@@ -83,13 +101,14 @@ public final class APIService: APIServiceProtocol {
         data uploadData: Data,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws(APIError) -> Response {
-        let (data, response, summary) = try await performWithRetry(request) { [session] urlRequest in
-            // API nativa: la cancelación del Task cancela la transferencia.
-            // El body va SOLO como argumento de upload (no duplicado en httpBody).
-            // Delegate por-task para el progreso; los auth challenges caen al
-            // delegate de sesión (pinning) porque este no los implementa.
-            let taskDelegate = progress.map { UploadProgressDelegate(onProgress: $0) }
-            return try await session.upload(for: urlRequest, from: uploadData, delegate: taskDelegate)
+        let (data, response, summary) = try await performWithRetry(request) { [transport] urlRequest in
+            // El body va en `httpBody`, no en un parámetro de upload aparte
+            // (CN-04 lo cambia por `upload(for:from:)` con delegate). El
+            // progreso, si lo hay, es el único lado (upload) de `TransferProgress`.
+            var urlRequest = urlRequest
+            urlRequest.httpBody = uploadData
+            let transferProgress = progress.map { TransferProgress(onUpload: $0) }
+            return try await transport.send(urlRequest, progress: transferProgress)
         }
         return try Self.decode(Response.self, from: data, request: summary, response: response, using: configuration.makeDecoder)
     }
@@ -100,28 +119,12 @@ public final class APIService: APIServiceProtocol {
         request: Request,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws(APIError) -> Data {
-        // Se usa `session.bytes(for:)` y no `download(for:)` porque la API de este
-        // método devuelve `Data` en memoria (no una URL de archivo): descargar a
-        // disco para releerlo sería trabajo extra, y el stream nos da cancelación
-        // nativa + progreso sin delegate.
-        let (data, _, _) = try await performWithRetry(request) { [session] urlRequest in
-            let (bytes, response) = try await session.bytes(for: urlRequest)
-
-            let expectedLength = response.expectedContentLength
-            var data = Data()
-            if expectedLength > 0 {
-                data.reserveCapacity(Int(expectedLength))
-            }
-
-            let progressGranularity = 64 * 1024
-            for try await byte in bytes {
-                data.append(byte)
-                if expectedLength > 0, data.count % progressGranularity == 0 {
-                    progress?(min(1.0, Double(data.count) / Double(expectedLength)))
-                }
-            }
-            progress?(1.0)
-            return (data, response)
+        // Sigue en memoria (no a disco) hasta CN-04: el transporte devuelve
+        // `Data` completa, con progreso reportado por el lado `onDownload` de
+        // `TransferProgress` mientras llega.
+        let (data, _, _) = try await performWithRetry(request) { [transport] urlRequest in
+            let transferProgress = progress.map { TransferProgress(onDownload: $0) }
+            return try await transport.send(urlRequest, progress: transferProgress)
         }
         return data
     }
@@ -154,12 +157,12 @@ public final class APIService: APIServiceProtocol {
                                   retryPolicy.shouldRetry(error, attemptsMade)
                 guard shouldRetry else { throw error }
 
-                let delay = error.retryAfter.map(\.timeInterval) ?? retryPolicy.jitteredDelay(for: attemptsMade - 1)
+                let delay = error.retryAfter ?? retryPolicy.jitteredDelay(for: attemptsMade - 1)
                 NetLog.retry.debug(
-                    "retry \(attemptsMade, privacy: .public)/\(self.retryPolicy.maxAttempts - 1, privacy: .public) en \(String(format: "%.2f", delay), privacy: .public)s — \(String(describing: error), privacy: .public)"
+                    "retry \(attemptsMade, privacy: .public)/\(self.retryPolicy.maxAttempts - 1, privacy: .public) en \(String(describing: delay), privacy: .public) — \(String(describing: error), privacy: .public)"
                 )
                 do {
-                    try await Task.sleep(for: .seconds(delay))
+                    try await clock.sleep(for: delay)
                 } catch let cancellation {
                     throw APIError(code: .cancelled, request: error.request, underlying: cancellation)
                 }

@@ -50,19 +50,42 @@ public protocol APIServiceProtocol: Sendable {
         progress: (@Sendable (Double) -> Void)?
     ) async throws(APIError) -> Response
 
-    /// Downloads data with progress tracking.
+    /// Fetches `request`'s response body entirely in memory, with progress
+    /// tracking as it arrives.
     ///
-    /// Cancelling the surrounding `Task` cancels the transfer.
+    /// Cancelling the surrounding `Task` cancels the transfer. For anything
+    /// large enough that holding it in memory matters, use
+    /// `download(_:to:progress:)` instead.
     ///
     /// - Parameters:
-    ///   - request: The download request configuration
+    ///   - request: The request to execute.
     ///   - progress: Closure called with download progress (0.0 to 1.0).
     ///     Fractional values are only reported when the server sends
     ///     Content-Length; 1.0 is always reported when the body finished.
-    /// - Returns: Downloaded data
-    /// - Throws: `APIError` if the download fails
-    func download<Request: BaseRequest>(
-        request: Request,
+    /// - Returns: The response body.
+    /// - Throws: `APIError` if the transfer fails.
+    func data<Request: BaseRequest>(
+        for request: Request,
         progress: (@Sendable (Double) -> Void)?
     ) async throws(APIError) -> Data
+
+    /// Streams `request`'s response body straight to `destination` on disk —
+    /// no matter its size, it is never held in memory as `Data`.
+    ///
+    /// Cancelling the surrounding `Task` cancels the transfer; no file is
+    /// left at `destination` if the download does not complete. Any existing
+    /// file at `destination` is replaced on success.
+    ///
+    /// - Parameters:
+    ///   - request: The request to execute.
+    ///   - destination: Where to write the downloaded file.
+    ///   - progress: Closure called with download progress (0.0 to 1.0).
+    ///     Fractional values are only reported when the server sends
+    ///     Content-Length; 1.0 is always reported when the body finished.
+    /// - Throws: `APIError` if the download fails.
+    func download<Request: BaseRequest>(
+        _ request: Request,
+        to destination: URL,
+        progress: (@Sendable (Double) -> Void)?
+    ) async throws(APIError)
 }

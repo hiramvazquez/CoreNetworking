@@ -14,10 +14,23 @@ public protocol HTTPTransport: Sendable {
     /// - Parameter progress: Optional upload/download progress callbacks.
     ///   `nil` when the caller does not care.
     /// - Throws: Whatever the underlying transport produces — a `URLError`,
-    ///   a `CancellationError`, or any other `Error`. This protocol makes no
-    ///   promises about the error type: `APIService` is what maps it to
-    ///   `APIError`.
+    ///   a `CancellationError`, `PinningFailure`, or any other `Error`. This
+    ///   protocol makes no promises about the error type: `APIService` is
+    ///   what maps it to `APIError`.
     func send(_ request: URLRequest, progress: TransferProgress?) async throws -> (Data, HTTPURLResponse)
+
+    /// Sends `request` and streams its body straight to `destination`
+    /// instead of holding it in memory — the fix for CN-07 (`download` used
+    /// to buffer the whole response as `Data`, byte by byte).
+    ///
+    /// - Parameters:
+    ///   - destination: Where to move the downloaded file. Any existing file
+    ///     at this URL is replaced. The implementation is responsible for
+    ///     leaving no orphaned temporary file behind, on success OR failure.
+    ///   - progress: Optional download progress callback. `onUpload` is
+    ///     ignored (a download has no request body to report).
+    /// - Throws: Same contract as `send`.
+    func download(_ request: URLRequest, to destination: URL, progress: TransferProgress?) async throws -> HTTPURLResponse
 }
 
 /// Upload/download progress callbacks for one `HTTPTransport.send` call.

@@ -6,9 +6,11 @@ import Foundation
 ///   `HTTPTransport` (`URLSessionTransport` by default via the convenience
 ///   `init`, `InMemoryTransport` in unit tests). The transport — not this
 ///   type — owns the session and its lifetime.
-/// - Upload/download go through the same transport and pipeline as `execute`
-///   (interceptors + retry + error mapping); cancelling the task cancels the
-///   transfer.
+/// - `upload`/`data` go through the same transport, interceptors, retry and
+///   error mapping as `execute`; `download(_:to:)` shares the transport and
+///   error mapping but is a single attempt (writing straight to disk doesn't
+///   fit the retry pipeline's shape — see its doc comment). Cancelling the
+///   task cancels the transfer either way.
 /// - Retry sleeps through an injected `Clock<Duration>` (`ContinuousClock` by
 ///   default, `ManualClock` in tests) — no real wall-clock waits in tests.
 /// - Every public method throws `APIError` (typed throws).
@@ -126,20 +128,88 @@ public final class APIService: APIServiceProtocol {
         return try Self.decode(Response.self, from: data, request: summary, response: response, using: configuration.makeDecoder)
     }
 
-    // MARK: - Download
+    // MARK: - Data (in-memory download)
 
-    public func download<Request: BaseRequest>(
-        request: Request,
+    public func data<Request: BaseRequest>(
+        for request: Request,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws(APIError) -> Data {
-        // Sigue en memoria (no a disco) hasta CN-04: el transporte devuelve
-        // `Data` completa, con progreso reportado por el lado `onDownload` de
-        // `TransferProgress` mientras llega.
         let (data, _, _) = try await performWithRetry(request) { [transport] urlRequest in
             let transferProgress = progress.map { TransferProgress(onDownload: $0) }
             return try await transport.send(urlRequest, progress: transferProgress)
         }
         return data
+    }
+
+    // MARK: - Download to disk
+
+    /// Streams `request`'s body straight to `destination` (CN-07: `download`
+    /// used to buffer the whole response as `Data`, byte by byte).
+    ///
+    /// This does NOT go through `performWithRetry`/`performOnce` — those own
+    /// the shared retry pipeline (CN-06) and their transport closure returns
+    /// `(Data, URLResponse)`, a shape that cannot fit writing straight to a
+    /// file. Retrying a partial download-to-disk also needs to
+    /// truncate/restart the file, which is out of scope here: this is a
+    /// single attempt. The pipeline shape (build → interceptors → transport →
+    /// interceptors → status validation) and the pinning mapping below are
+    /// deliberately the same as `performOnce`'s, kept separate rather than
+    /// factored out to avoid touching the region CN-06 owns.
+    public func download<Request: BaseRequest>(
+        _ request: Request,
+        to destination: URL,
+        progress: (@Sendable (Double) -> Void)? = nil
+    ) async throws(APIError) {
+        var urlRequest = try buildURLRequest(from: request)
+        for interceptor in interceptors {
+            urlRequest = await interceptor.willSend(urlRequest)
+        }
+        let summary = APIError.RequestSummary(urlRequest)
+        let transferProgress = progress.map { TransferProgress(onDownload: $0) }
+
+        let response: HTTPURLResponse
+        do {
+            response = try await transport.download(urlRequest, to: destination, progress: transferProgress)
+        } catch let pinningFailure as PinningFailure {
+            // El fix de CN-01: `URLError(.cancelled)` por un challenge que
+            // pinning rechazó llega aquí como `PinningFailure` (lo traduce
+            // `URLSessionTransport`), nunca confundido con `.cancelled`.
+            let apiError = APIError(code: .untrustedServer, request: summary, underlying: pinningFailure)
+            await notifyInterceptorsOfFailure(urlRequest, error: apiError)
+            throw apiError
+        } catch let urlError as URLError {
+            let code: APIError.Code = urlError.code == .cancelled ? .cancelled : .transport
+            let apiError = APIError(code: code, request: summary, underlying: urlError)
+            await notifyInterceptorsOfFailure(urlRequest, error: apiError)
+            throw apiError
+        } catch let cancellation as CancellationError {
+            let apiError = APIError(code: .cancelled, request: summary, underlying: cancellation)
+            await notifyInterceptorsOfFailure(urlRequest, error: apiError)
+            throw apiError
+        } catch {
+            let apiError = (error as? APIError) ?? APIError(code: .unexpected, request: summary, underlying: error)
+            await notifyInterceptorsOfFailure(urlRequest, error: apiError)
+            throw apiError
+        }
+
+        for interceptor in interceptors {
+            await interceptor.didReceive(response, data: Data())
+        }
+
+        guard (200..<300).contains(response.statusCode) else {
+            // El transporte ya movió el body (sea lo que sea: el mensaje de
+            // error del servidor, no el fichero esperado) a `destination`
+            // antes de que `download` supiera el status — no deja rastro de
+            // un download fallido donde el consumidor espera uno bueno.
+            try? FileManager.default.removeItem(at: destination)
+            let apiError = APIError(
+                code: .httpStatus,
+                request: summary,
+                response: APIError.ResponseSummary(response: response, body: Data())
+            )
+            await notifyInterceptorsOfFailure(urlRequest, error: apiError)
+            throw apiError
+        }
     }
 
     // MARK: - Shared Pipeline
@@ -199,11 +269,18 @@ public final class APIService: APIServiceProtocol {
         let response: URLResponse
         do {
             (data, response) = try await transport(urlRequest)
+        } catch let pinningFailure as PinningFailure {
+            // CN-01: `URLError(.cancelled)` por un challenge que pinning
+            // rechazó llega aquí como `PinningFailure` (lo traduce
+            // `URLSessionTransport`, que es quien sabe si el `TaskDelegate`
+            // de ESTA tarea fue quien canceló), nunca confundido con la
+            // cancelación del llamador (`.cancelled`, más abajo).
+            let apiError = APIError(code: .untrustedServer, request: summary, underlying: pinningFailure)
+            await notifyInterceptorsOfFailure(urlRequest, error: apiError)
+            throw apiError
         } catch let urlError as URLError {
-            // `.cancelled` es la cancelación del llamador. El pinning que
-            // rechaza un certificado también llega como `.cancelled` desde
-            // Foundation: distinguirlo (→ `.untrustedServer`) exige el delegate
-            // por tarea de CN-04; el código ya existe para que nada lo confunda.
+            // `.cancelled` aquí es SIEMPRE la cancelación del llamador: un
+            // fallo de pinning ya se interceptó arriba como `PinningFailure`.
             let code: APIError.Code = urlError.code == .cancelled ? .cancelled : .transport
             let apiError = APIError(code: code, request: summary, underlying: urlError)
             await notifyInterceptorsOfFailure(urlRequest, error: apiError)

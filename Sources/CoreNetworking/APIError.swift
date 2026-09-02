@@ -92,6 +92,14 @@ public struct APIError: Error, Sendable {
             self.url = url
         }
 
+        /// `.get` when `httpMethod` is `nil` (an `URLRequest` with no method
+        /// set). Also `.get` — a known, deliberate limitation, not a bug —
+        /// when `httpMethod` names something outside `HTTPMethod`'s closed
+        /// set (e.g. a WebDAV verb): `HTTPMethod` stays closed rather than
+        /// growing a `case custom(String)`, so a method this package doesn't
+        /// support ends up misreported here instead of failing louder.
+        /// `RequestSummary` exists for diagnostics — what was attempted —
+        /// not as a faithful echo of the wire method.
         init(_ urlRequest: URLRequest) {
             self.method = urlRequest.httpMethod.flatMap(HTTPMethod.init(rawValue:)) ?? .get
             self.url = urlRequest.url
@@ -200,7 +208,8 @@ public struct APIError: Error, Sendable {
     /// |-------------------|------------------------------------------------------------|--------------------|
     /// | `.transport`      | `notConnectedToInternet`, `dataNotAllowed`, `internationalRoamingOff` | `.offline` |
     /// | `.transport`      | `timedOut`                                                 | `.timeout`         |
-    /// | `.transport`      | any other `URLError` (`networkConnectionLost`, `cannotConnectToHost`, `dnsLookupFailed`, `cannotFindHost`, …) | `.unknown` |
+    /// | `.transport`      | `networkConnectionLost`, `cannotConnectToHost`, `dnsLookupFailed`, `cannotFindHost` | `.unreachable` |
+    /// | `.transport`      | any other `URLError`                                       | `.unknown`         |
     /// | `.httpStatus`     | 401                                                        | `.unauthorized`    |
     /// | `.httpStatus`     | 403                                                        | `.forbidden`       |
     /// | `.httpStatus`     | 404                                                        | `.notFound`        |
@@ -220,6 +229,8 @@ public struct APIError: Error, Sendable {
                 return .offline
             case .timedOut?:
                 return .timeout
+            case .networkConnectionLost?, .cannotConnectToHost?, .dnsLookupFailed?, .cannotFindHost?:
+                return .unreachable
             default:
                 return .unknown
             }
@@ -246,7 +257,7 @@ public struct APIError: Error, Sendable {
 
     /// Coarse, closed classification of an `APIError` (see `category`).
     public enum Category: Sendable, Hashable, CaseIterable {
-        case offline, timeout, unauthorized, forbidden, notFound, rateLimited, client, server,
+        case offline, timeout, unreachable, unauthorized, forbidden, notFound, rateLimited, client, server,
             untrustedServer, cancelled, decoding, unknown
     }
 
@@ -310,7 +321,7 @@ public struct APIError: Error, Sendable {
 
 extension Duration {
     /// Seconds as `TimeInterval`, para el cálculo de backoff de
-    /// `RetryPolicy` (`TimeInterval`-based; ver CN-03/`Clock` para migrarlo).
+    /// `RetryPolicy` (`TimeInterval`-based).
     var timeInterval: TimeInterval {
         TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1e18
     }
@@ -383,6 +394,13 @@ extension APIError: LocalizedError {
             return String(
                 localized: "error.timeout",
                 defaultValue: "The server did not respond in time.",
+                bundle: bundle,
+                locale: locale
+            )
+        case .unreachable:
+            return String(
+                localized: "error.unreachable",
+                defaultValue: "Could not connect to the server.",
                 bundle: bundle,
                 locale: locale
             )

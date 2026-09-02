@@ -74,7 +74,11 @@ struct APIErrorTests {
         let baseURL = try #require(URL(string: "https://api-error-arbitrary.test"))
         let configuration = NetworkingConfiguration(
             baseURL: baseURL,
-            protocolClasses: [ArbitraryFailureProtocol.self]
+            sessionConfiguration: {
+                let sessionConfiguration = URLSessionConfiguration.ephemeral
+                sessionConfiguration.protocolClasses = [ArbitraryFailureProtocol.self]
+                return sessionConfiguration
+            }
         )
         let service = APIService(configuration: configuration, retryPolicy: .noRetry)
 
@@ -105,8 +109,10 @@ struct APIErrorTests {
             (APIError(code: .transport, underlying: URLError(.dataNotAllowed)), .offline),
             (APIError(code: .transport, underlying: URLError(.internationalRoamingOff)), .offline),
             (APIError(code: .transport, underlying: URLError(.timedOut)), .timeout),
-            (APIError(code: .transport, underlying: URLError(.networkConnectionLost)), .unknown),
-            (APIError(code: .transport, underlying: URLError(.dnsLookupFailed)), .unknown),
+            (APIError(code: .transport, underlying: URLError(.networkConnectionLost)), .unreachable),
+            (APIError(code: .transport, underlying: URLError(.cannotConnectToHost)), .unreachable),
+            (APIError(code: .transport, underlying: URLError(.dnsLookupFailed)), .unreachable),
+            (APIError(code: .transport, underlying: URLError(.cannotFindHost)), .unreachable),
             (APIError.stub(code: .httpStatus, statusCode: 401), .unauthorized),
             (APIError.stub(code: .httpStatus, statusCode: 403), .forbidden),
             (APIError.stub(code: .httpStatus, statusCode: 404), .notFound),
@@ -253,6 +259,35 @@ struct APIErrorTests {
         #expect(!description.lowercased().contains("error 9"))
     }
 
+    @Test("errorDescription de .unreachable es una frase humana en inglés")
+    func localizedDescriptionUnreachableEnglish() {
+        let error = APIError(code: .transport, underlying: URLError(.cannotConnectToHost))
+        #expect(error.category == .unreachable)
+        let expected = "Could not connect to the server."
+        let description =
+            Self.compiledBundle(for: "en")?
+            .localizedString(forKey: "error.unreachable", value: expected, table: "Localizable")
+            ?? error.errorDescription(locale: Locale(identifier: "en"))
+        #expect(description == expected)
+    }
+
+    @Test(
+        "errorDescription de .unreachable es una frase humana en español",
+        .disabled(
+            if: !hasCompiledSpanishStrings,
+            "Localizable.xcstrings no está compilado a es.lproj en este build (swift build/test no compila String Catalogs; xcodebuild sí)"
+        )
+    )
+    func localizedDescriptionUnreachableSpanish() {
+        let description = Self.compiledBundle(for: "es")!
+            .localizedString(
+                forKey: "error.unreachable",
+                value: "Could not connect to the server.",
+                table: "Localizable"
+            )
+        #expect(description == "No se pudo conectar con el servidor.")
+    }
+
     @Test(
         "errorDescription es una frase humana en español",
         .disabled(
@@ -285,6 +320,7 @@ struct APIErrorTests {
         switch category {
         case .offline: return APIError(code: .transport, underlying: URLError(.notConnectedToInternet))
         case .timeout: return APIError(code: .transport, underlying: URLError(.timedOut))
+        case .unreachable: return APIError(code: .transport, underlying: URLError(.dnsLookupFailed))
         case .unauthorized: return APIError.stub(code: .httpStatus, statusCode: 401)
         case .forbidden: return APIError.stub(code: .httpStatus, statusCode: 403)
         case .notFound: return APIError.stub(code: .httpStatus, statusCode: 404)

@@ -117,6 +117,6 @@ public extension BaseRequest {
 /// empty body) when the request's declared `Response` IS `Empty` — a request
 /// that declares a real `Response` and gets an empty body back is a decoding
 /// error, not `Empty()`.
-public struct Empty: Decodable, Sendable {
+public struct Empty: Decodable, Sendable, Equatable {
     public init() {}
 }

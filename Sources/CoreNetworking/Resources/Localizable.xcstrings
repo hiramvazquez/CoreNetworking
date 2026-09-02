@@ -78,6 +78,13 @@
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Algo ha fallado. Inténtalo de nuevo." } }
       }
     },
+    "error.unreachable" : {
+      "comment" : "APIError.category == .unreachable (networkConnectionLost, cannotConnectToHost, dnsLookupFailed, cannotFindHost)",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not connect to the server." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo conectar con el servidor." } }
+      }
+    },
     "error.untrustedServer" : {
       "comment" : "APIError.category == .untrustedServer (TLS pinning rejected the certificate)",
       "localizations" : {

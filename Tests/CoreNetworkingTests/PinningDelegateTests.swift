@@ -7,35 +7,32 @@ import Security
 /// acepta un certificado.
 ///
 /// Estos tests existen porque la primera medición de mutación del paquete
-/// (`swift-mutation-testing`, score global 42.1%) señaló `SessionDelegates.swift`
+/// (`swift-mutation-testing`, score global 42.1%) señaló el delegado de
+/// pinning (entonces `PinningSessionDelegate`, en `SessionDelegates.swift`)
 /// como el archivo con MÁS mutantes vivos: invertir `if result == .failed` o
 /// cambiar `== NSURLAuthenticationMethodServerTrust` por `!=` no rompía ningún
 /// test. La causa era un hueco de cableado, no de lógica: `PinningTests.swift`
 /// ejercita `SSLPinningConfiguration.validate()` a fondo y el mapeo
 /// resultado→disposition, pero nadie invocaba
-/// `urlSession(_:didReceive:completionHandler:)`, que es el método que los une.
+/// `urlSession(_:task:didReceive:completionHandler:)`, que es el método que los une.
 ///
-/// Es el mismo patrón del bug que la auditoría ya encontró en este paquete —la
-/// sesión se creaba con delegate y se descartaba, o sea el validador funcionaba
-/// y el cableado no—, esta vez en la capa de tests: doce tests daban sensación
-/// de cobertura sobre el punto más sensible del paquete y el cableado real no
-/// estaba verificado.
+/// CN-04 migró el delegado de sesión a `TaskDelegate` (por tarea, no por
+/// sesión) — el mismo patrón de bug que la auditoría encontró en el pipeline
+/// (CN-01: un fallo de pinning llegaba como `.cancelled` indistinguible de
+/// que el llamador cancelase) se repite aquí, esta vez en la capa de tests:
+/// doce tests daban sensación de cobertura sobre el punto más sensible del
+/// paquete y el cableado real no estaba verificado.
 ///
 /// ## Qué matan estos tests, y qué NO
 ///
-/// Verificado mutando `SessionDelegates.swift` a mano:
+/// Verificado mutando el delegado a mano:
 /// - invertir `result == .validated` (la línea que decide si se entrega
 ///   credencial) → **muere**;
 /// - invertir el guard `== NSURLAuthenticationMethodServerTrust` → **muere**;
-/// - invertir `if result == .failed` → **SOBREVIVE**, y seguirá haciéndolo.
-///
-/// Ese último no controla ninguna decisión: solo decide si se emite el log de
-/// "pinning falló". Su efecto observable es una línea en `os.Logger`, y matarlo
-/// exigiría inyectar el logger en el delegado — un cambio de diseño del
-/// paquete, no un test más. No es cosmético del todo: invertido, un fallo de
-/// pinning en producción dejaría de avisar, y AGENTS.md §6 pide que los fallos
-/// de observabilidad se hagan visibles. Queda registrado como finding en vez de
-/// fingir que esta suite lo cubre.
+/// - invertir `if result == .failed` → **SOBREVIVE** para el LOG, pero desde
+///   CN-04 esa misma rama también marca `pinningFailed = true` bajo lock —
+///   invertirla ahora sí mata el test "tras `.failed`, `pinningFailed == true`"
+///   de más abajo, que es exactamente el hueco que dejaba viva esta mutación.
 @Suite("Delegado de pinning: el cableado que decide en runtime")
 struct PinningDelegateTests {
 
@@ -101,12 +98,20 @@ struct PinningDelegateTests {
         override var authenticationMethod: String { metodo }
     }
 
+    /// Una `URLSessionTask` inerte: el delegado por tarea no la usa (ignora el
+    /// parámetro `task`), pero el método de protocolo la exige. Nunca se
+    /// llama `.resume()`.
+    private func tareaInerte() -> URLSessionTask {
+        URLSession.shared.dataTask(with: URL(string: "https://pinning.test")!)
+    }
+
     /// Invoca el delegado y devuelve lo que le pasó al `completionHandler`.
     private func decidir(
         pinning: SSLPinningConfiguration?,
-        espacio: URLProtectionSpace
-    ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
-        let delegado = PinningSessionDelegate(pinning: pinning)
+        espacio: URLProtectionSpace,
+        delegado: TaskDelegate? = nil
+    ) async -> (URLSession.AuthChallengeDisposition, URLCredential?, TaskDelegate) {
+        let delegado = delegado ?? TaskDelegate(pinning: pinning)
         let challenge = URLAuthenticationChallenge(
             protectionSpace: espacio,
             proposedCredential: nil,
@@ -115,11 +120,12 @@ struct PinningDelegateTests {
             error: nil,
             sender: SenderInerte()
         )
-        return await withCheckedContinuation { continuation in
-            delegado.urlSession(URLSession.shared, didReceive: challenge) { disposition, credential in
+        let (disposition, credential) = await withCheckedContinuation { continuation in
+            delegado.urlSession(URLSession.shared, task: tareaInerte(), didReceive: challenge) { disposition, credential in
                 continuation.resume(returning: (disposition, credential))
             }
         }
+        return (disposition, credential, delegado)
     }
 
     /// El challenge exige un sender; el delegado no lo usa, pero sin él no se
@@ -143,12 +149,37 @@ struct PinningDelegateTests {
             hosts: .only(["pinning.test"]),
             chainValidation: .unsafeSkipForDevelopment   // el cert es autofirmado: la cadena no evalúa
         )
-        let (disposition, credential) = await decidir(
+        let (disposition, credential, _) = await decidir(
             pinning: pinning,
             espacio: EspacioConTrust(trust: trust, host: "pinning.test")
         )
         #expect(disposition == .cancelAuthenticationChallenge)
         #expect(credential == nil, "cancelar y a la vez entregar credencial sería contradictorio")
+    }
+
+    // MARK: - Tras `.failed`, el delegado recuerda que fue ÉL quien canceló (CN-01)
+
+    /// El fix de CN-01: sin este flag, Foundation convierte la cancelación
+    /// del challenge en `URLError(.cancelled)`, indistinguible de que el
+    /// llamador cancelara el `Task`. `URLSessionTransport` lee este flag
+    /// justo después de que `session.data(for:)`/`download(for:)` lance esa
+    /// `URLError`, para decidir si la reemplaza por `PinningFailure`.
+    @Test("tras un pin que no coincide, pinningFailed == true")
+    func pinQueNoCoincideMarcaPinningFailed() async throws {
+        let trust = try trustDePrueba()
+        let pinning = SSLPinningConfiguration(
+            publicKeyHashes: [Self.otroPin, Self.otroPinDeRespaldo],
+            hosts: .only(["pinning.test"]),
+            chainValidation: .unsafeSkipForDevelopment
+        )
+        let delegado = TaskDelegate(pinning: pinning)
+        #expect(delegado.pinningFailed == false, "antes de decidir nada, no ha fallado nada")
+        _ = await decidir(
+            pinning: pinning,
+            espacio: EspacioConTrust(trust: trust, host: "pinning.test"),
+            delegado: delegado
+        )
+        #expect(delegado.pinningFailed == true)
     }
 
     // MARK: - El pin coincide: se ACEPTA con credencial
@@ -161,12 +192,13 @@ struct PinningDelegateTests {
             hosts: .only(["pinning.test"]),
             chainValidation: .unsafeSkipForDevelopment
         )
-        let (disposition, credential) = await decidir(
+        let (disposition, credential, delegado) = await decidir(
             pinning: pinning,
             espacio: EspacioConTrust(trust: trust, host: "pinning.test")
         )
         #expect(disposition == .useCredential)
         #expect(credential != nil, "useCredential sin credencial deja la conexión sin resolver")
+        #expect(delegado.pinningFailed == false, "un pin que coincide no es un fallo de pinning")
     }
 
     // MARK: - No aplica: se delega en el sistema, JAMÁS useCredential a ciegas
@@ -179,23 +211,25 @@ struct PinningDelegateTests {
             hosts: .only(["otro.host"]),
             chainValidation: .unsafeSkipForDevelopment
         )
-        let (disposition, credential) = await decidir(
+        let (disposition, credential, delegado) = await decidir(
             pinning: pinning,
             espacio: EspacioConTrust(trust: trust, host: "pinning.test")
         )
         #expect(disposition == .performDefaultHandling)
         #expect(credential == nil)
+        #expect(delegado.pinningFailed == false)
     }
 
     @Test("sin pinning configurado → lo decide el sistema")
     func sinPinningDelegaEnElSistema() async throws {
         let trust = try trustDePrueba()
-        let (disposition, credential) = await decidir(
+        let (disposition, credential, delegado) = await decidir(
             pinning: nil,
             espacio: EspacioConTrust(trust: trust, host: "pinning.test")
         )
         #expect(disposition == .performDefaultHandling)
         #expect(credential == nil)
+        #expect(delegado.pinningFailed == false)
     }
 
     // MARK: - Challenges que NO son server-trust
@@ -209,7 +243,7 @@ struct PinningDelegateTests {
             publicKeyHashes: [Self.pinDelCertificado, Self.otroPinDeRespaldo],
             hosts: .all                          // pinnearía TODO host…
         )
-        let (disposition, credential) = await decidir(
+        let (disposition, credential, delegado) = await decidir(
             pinning: pinning,
             espacio: EspacioConTrust(
                 trust: nil,
@@ -219,6 +253,7 @@ struct PinningDelegateTests {
         )
         #expect(disposition == .performDefaultHandling)
         #expect(credential == nil)
+        #expect(delegado.pinningFailed == false)
     }
 
     /// Caso degenerado: método correcto pero sin trust. No debe reventar ni
@@ -229,11 +264,12 @@ struct PinningDelegateTests {
             publicKeyHashes: [Self.pinDelCertificado, Self.otroPinDeRespaldo],
             hosts: .all
         )
-        let (disposition, credential) = await decidir(
+        let (disposition, credential, delegado) = await decidir(
             pinning: pinning,
             espacio: EspacioConTrust(trust: nil, host: "pinning.test")
         )
         #expect(disposition == .performDefaultHandling)
         #expect(credential == nil)
+        #expect(delegado.pinningFailed == false)
     }
 }

@@ -6,10 +6,10 @@ import Foundation
 ///   `HTTPTransport` (`URLSessionTransport` by default via the convenience
 ///   `init`, `InMemoryTransport` in unit tests). The transport — not this
 ///   type — owns the session and its lifetime.
-/// - `upload`/`data` go through the same transport, interceptors, retry and
-///   error mapping as `execute`; `download(_:to:)` shares the transport and
-///   error mapping but is a single attempt (writing straight to disk doesn't
-///   fit the retry pipeline's shape — see its doc comment). Cancelling the
+/// - `upload`/`data`/`download(_:to:)` all go through the same transport,
+///   interceptors, retry and error mapping as `execute` — one shared
+///   pipeline, not a parallel copy for transfers (see `download`'s doc
+///   comment for how writing straight to disk fits into it). Cancelling the
 ///   task cancels the transfer either way.
 /// - Retry sleeps through an injected `Clock<Duration>` (`ContinuousClock` by
 ///   default, `ManualClock` in tests) — no real wall-clock waits in tests.
@@ -85,7 +85,12 @@ public final class APIService: APIServiceProtocol {
         // no `.default` a pelo: es lo que hace que `sessionConfiguration` llegue
         // a la `URLSession` real que construye `URLSessionTransport`.
         let sessionConfiguration = configuration.sessionConfiguration()
-        if let protocolClasses = configuration.protocolClasses {
+        // `legacyProtocolClasses`, no el `protocolClasses` público deprecado:
+        // este `init` sigue honrando lo que alguien pase ahí (compatibilidad
+        // hacia atrás), pero leer el accessor público y deprecado desde aquí
+        // avisaría de una deprecación que no es responsabilidad de quien
+        // llama a este `init` — solo de quien todavía usa el parámetro.
+        if let protocolClasses = configuration.legacyProtocolClasses {
             sessionConfiguration.protocolClasses = protocolClasses
         }
         self.init(
@@ -132,27 +137,55 @@ public final class APIService: APIServiceProtocol {
 
     // MARK: - Upload
 
-    public func upload<Request: BaseRequest, Response: Decodable>(
-        request: Request,
+    public func upload<Request: BaseRequest>(
+        _ request: Request,
         data uploadData: Data,
         progress: (@Sendable (Double) -> Void)? = nil
-    ) async throws(APIError) -> Response {
-        let (data, response, summary) = try await performWithRetry(request) { [transport] urlRequest in
-            // El body va en `httpBody`, no en un parámetro de upload aparte
-            // (CN-04 lo cambia por `upload(for:from:)` con delegate). El
-            // progreso, si lo hay, es el único lado (upload) de `TransferProgress`.
-            var urlRequest = urlRequest
-            urlRequest.httpBody = uploadData
-            let transferProgress = progress.map { TransferProgress(onUpload: $0) }
-            return try await transport.send(urlRequest, progress: transferProgress)
-        }
+    ) async throws(APIError) -> Request.Response {
+        let (data, response, summary) = try await performUpload(request, data: uploadData, progress: progress)
         return try Self.decode(
-            Response.self,
+            Request.Response.self,
             from: data,
             request: summary,
             response: response,
             using: configuration.makeDecoder
         )
+    }
+
+    public func upload<Request: BaseRequest, Value: Decodable & Sendable>(
+        _ request: Request,
+        data uploadData: Data,
+        as type: Value.Type,
+        progress: (@Sendable (Double) -> Void)? = nil
+    ) async throws(APIError) -> Value {
+        let (data, response, summary) = try await performUpload(request, data: uploadData, progress: progress)
+        return try Self.decode(
+            Value.self,
+            from: data,
+            request: summary,
+            response: response,
+            using: configuration.makeDecoder
+        )
+    }
+
+    /// Shared by both `upload` overloads: runs the transfer through the
+    /// pipeline, leaving decoding to the caller (it's the only thing that
+    /// differs between `Request.Response` and an explicit `as:` type).
+    private func performUpload<Request: BaseRequest>(
+        _ request: Request,
+        data uploadData: Data,
+        progress: (@Sendable (Double) -> Void)?
+    ) async throws(APIError) -> (data: Data, response: HTTPURLResponse, request: APIError.RequestSummary) {
+        try await performWithRetry(request) { [transport] urlRequest in
+            // El body va en `httpBody`; `URLSessionTransport.send` lo mueve a
+            // `session.upload(for:from:delegate:)` para que el progreso de
+            // subida sea fiable (ver su implementación). El progreso, si lo
+            // hay, es el único lado (upload) de `TransferProgress`.
+            var urlRequest = urlRequest
+            urlRequest.httpBody = uploadData
+            let transferProgress = progress.map { TransferProgress(onUpload: $0) }
+            return try await transport.send(urlRequest, progress: transferProgress)
+        }
     }
 
     // MARK: - Data (in-memory download)
@@ -170,84 +203,41 @@ public final class APIService: APIServiceProtocol {
 
     // MARK: - Download to disk
 
-    /// Streams `request`'s body straight to `destination` (CN-07: `download`
-    /// used to buffer the whole response as `Data`, byte by byte).
+    /// Streams `request`'s body straight to `destination` through the same
+    /// shared pipeline as `execute`/`upload`/`data` — interceptors, retry and
+    /// error mapping all go through `performWithRetry`, not a parallel copy
+    /// of it. The transport closure below writes the body to `destination`
+    /// itself and hands `performWithRetry` back an empty `Data()` as its
+    /// placeholder "body" (there is nothing to decode for a download, and the
+    /// interceptors' `didReceive` already only ever saw `Data()` here — the
+    /// real bytes never held in memory).
     ///
-    /// This does NOT go through `performWithRetry`/`performOnce` — those own
-    /// the shared retry pipeline (CN-06) and their transport closure returns
-    /// `(Data, URLResponse)`, a shape that cannot fit writing straight to a
-    /// file. Retrying a partial download-to-disk also needs to
-    /// truncate/restart the file, which is out of scope here: this is a
-    /// single attempt. The pipeline shape (build → interceptors → transport →
-    /// interceptors → status validation) and the pinning mapping below are
-    /// deliberately the same as `performOnce`'s, kept separate rather than
-    /// factored out to avoid touching the region CN-06 owns.
+    /// Retry is valid because `HTTPTransport.download` writes `destination`
+    /// atomically on every attempt: a failed attempt's error body (if the
+    /// transport got that far) is what a subsequent successful attempt
+    /// overwrites, or what gets cleaned up below if every attempt fails. A
+    /// `download` that failed partway through therefore always retries from
+    /// scratch, never resumes.
     public func download<Request: BaseRequest>(
         _ request: Request,
         to destination: URL,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws(APIError) {
-        var urlRequest = try buildURLRequest(from: request)
-        // Un solo intento (ver arriba): el contexto es siempre el del intento 1.
-        let context = RequestContext(request: urlRequest, attempt: 1)
-        for interceptor in interceptors {
-            do {
-                urlRequest = try await interceptor.willSend(urlRequest, context: context)
-            } catch {
-                let apiError = APIError(
-                    code: .interceptor,
-                    request: APIError.RequestSummary(urlRequest),
-                    underlying: error
-                )
-                await notifyInterceptorsOfFailure(apiError, context: context)
-                throw apiError
-            }
-        }
-        let summary = APIError.RequestSummary(urlRequest)
-        let transferProgress = progress.map { TransferProgress(onDownload: $0) }
-
-        let response: HTTPURLResponse
         do {
-            response = try await transport.download(urlRequest, to: destination, progress: transferProgress)
-        } catch let pinningFailure as PinningFailure {
-            // El fix de CN-01: `URLError(.cancelled)` por un challenge que
-            // pinning rechazó llega aquí como `PinningFailure` (lo traduce
-            // `URLSessionTransport`), nunca confundido con `.cancelled`.
-            let apiError = APIError(code: .untrustedServer, request: summary, underlying: pinningFailure)
-            await notifyInterceptorsOfFailure(apiError, context: context)
-            throw apiError
-        } catch let urlError as URLError {
-            let code: APIError.Code = urlError.code == .cancelled ? .cancelled : .transport
-            let apiError = APIError(code: code, request: summary, underlying: urlError)
-            await notifyInterceptorsOfFailure(apiError, context: context)
-            throw apiError
-        } catch let cancellation as CancellationError {
-            let apiError = APIError(code: .cancelled, request: summary, underlying: cancellation)
-            await notifyInterceptorsOfFailure(apiError, context: context)
-            throw apiError
+            _ = try await performWithRetry(request) { [transport] urlRequest in
+                let transferProgress = progress.map { TransferProgress(onDownload: $0) }
+                let response = try await transport.download(urlRequest, to: destination, progress: transferProgress)
+                return (Data(), response)
+            }
         } catch {
-            let apiError = (error as? APIError) ?? APIError(code: .unexpected, request: summary, underlying: error)
-            await notifyInterceptorsOfFailure(apiError, context: context)
-            throw apiError
-        }
-
-        for interceptor in interceptors {
-            await interceptor.didReceive(response, data: Data(), context: context)
-        }
-
-        guard (200..<300).contains(response.statusCode) else {
-            // El transporte ya movió el body (sea lo que sea: el mensaje de
-            // error del servidor, no el fichero esperado) a `destination`
-            // antes de que `download` supiera el status — no deja rastro de
-            // un download fallido donde el consumidor espera uno bueno.
+            // El transporte ya movió a `destination` lo que llegó (el mensaje
+            // de error del servidor incluido) antes de que se supiera el
+            // status: en el último intento fallido no debe quedar rastro
+            // donde el consumidor espera un fichero bueno. Los intentos
+            // anteriores ya quedaron sobrescritos por el siguiente (atómico),
+            // así que basta con limpiar una vez, al final.
             try? FileManager.default.removeItem(at: destination)
-            let apiError = APIError(
-                code: .httpStatus,
-                request: summary,
-                response: APIError.ResponseSummary(response: response, body: Data())
-            )
-            await notifyInterceptorsOfFailure(apiError, context: context)
-            throw apiError
+            throw error
         }
     }
 
@@ -399,8 +389,8 @@ public final class APIService: APIServiceProtocol {
         do {
             (data, response) = try await transport(urlRequest)
         } catch let pinningFailure as PinningFailure {
-            // CN-01: `URLError(.cancelled)` por un challenge que pinning
-            // rechazó llega aquí como `PinningFailure` (lo traduce
+            // `URLError(.cancelled)` por un challenge que pinning rechazó
+            // llega aquí como `PinningFailure` (lo traduce
             // `URLSessionTransport`, que es quien sabe si el `TaskDelegate`
             // de ESTA tarea fue quien canceló), nunca confundido con la
             // cancelación del llamador (`.cancelled`, más abajo).

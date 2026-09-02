@@ -56,11 +56,20 @@ public final class MockAPIService: APIServiceProtocol, @unchecked Sendable {
         try stubbedValue(for: Request.self)
     }
 
-    public func upload<Request: BaseRequest, Response: Decodable>(
-        request: Request,
+    public func upload<Request: BaseRequest>(
+        _ request: Request,
         data: Data,
         progress: (@Sendable (Double) -> Void)?
-    ) async throws(APIError) -> Response {
+    ) async throws(APIError) -> Request.Response {
+        try stubbedValue(for: Request.self)
+    }
+
+    public func upload<Request: BaseRequest, Value: Decodable & Sendable>(
+        _ request: Request,
+        data: Data,
+        as type: Value.Type,
+        progress: (@Sendable (Double) -> Void)?
+    ) async throws(APIError) -> Value {
         try stubbedValue(for: Request.self)
     }
 
@@ -91,11 +100,36 @@ public final class MockAPIService: APIServiceProtocol, @unchecked Sendable {
 
     private func stubbedValue<Request: BaseRequest, Value>(for requestType: Request.Type) throws(APIError) -> Value {
         guard let stub = state.withLockUnchecked({ $0[ObjectIdentifier(requestType)] }) else {
-            throw APIError(code: .invalidResponse)
+            throw APIError(code: .unstubbed, underlying: UnstubbedRequest(request: requestType, expected: Value.self))
         }
         if let error = stub.error { throw error }
         if let value = stub.value as? Value { return value }
-        throw APIError(code: .invalidResponse)
+        throw APIError(code: .unstubbed, underlying: UnstubbedRequest(request: requestType, expected: Value.self))
+    }
+}
+
+// MARK: - APIError.Code.unstubbed
+
+extension APIError.Code {
+    /// Thrown by `MockAPIService` when a request type has no stub
+    /// registered, or the one registered doesn't match the type asked for.
+    /// `.invalidResponse` used to stand in for this and misled — nothing
+    /// about a response was invalid, the test forgot to (or couldn't) stub
+    /// the call. `Code` is an open set (see `APIError.Code`), which is
+    /// exactly what lets test support define its own without touching the
+    /// package's.
+    public static let unstubbed = Self("testSupport.unstubbed")
+}
+
+/// `underlying` of an `APIError(code: .unstubbed)`: names the request type
+/// and the type the caller expected back, so the failure message says
+/// exactly what to stub instead of just "no stub".
+private struct UnstubbedRequest: Error, CustomStringConvertible {
+    let request: Any.Type
+    let expected: Any.Type
+
+    var description: String {
+        "No stub registered for \(request) matching \(expected) — call stub(_:returning:) or stub(_:throwing:) first."
     }
 }
 

@@ -128,7 +128,14 @@ struct TransferTests {
         maxAttempts: Int = 1
     ) throws -> (APIService, URL) {
         let baseURL = try #require(URL(string: "https://\(host)"))
-        let configuration = NetworkingConfiguration(baseURL: baseURL, protocolClasses: [MockURLProtocol.self])
+        let configuration = NetworkingConfiguration(
+            baseURL: baseURL,
+            sessionConfiguration: {
+                let sessionConfiguration = URLSessionConfiguration.ephemeral
+                sessionConfiguration.protocolClasses = [MockURLProtocol.self]
+                return sessionConfiguration
+            }
+        )
         let policy = RetryPolicy(maxAttempts: maxAttempts, initialDelay: .milliseconds(10), maxDelay: .milliseconds(50))
         return (APIService(configuration: configuration, retryPolicy: policy), baseURL)
     }
@@ -151,10 +158,10 @@ struct TransferTests {
             )
         )
 
-        let result: UploadResult = try await service.upload(
-            request: PutUpload(),
-            data: Data("payload".utf8)
-        )
+        // Sin anotación de tipo: `Request.Response` (== `PutUpload.Response`
+        // == `UploadResult`) se infiere del propio request, igual que en
+        // `execute(_:)` — el criterio de aceptación de la firma alineada.
+        let result = try await service.upload(PutUpload(), data: Data("payload".utf8))
         #expect(result == UploadResult(id: 42))
         #expect(requestCount(host: host) == 1)
     }
@@ -172,7 +179,7 @@ struct TransferTests {
         )
 
         await #expect(throws: APIError.self) {
-            let _: UploadResult = try await service.upload(request: PutUpload(), data: Data())
+            let _: UploadResult = try await service.upload(PutUpload(), data: Data())
         }
         #expect(requestCount(host: host) == 2)
     }
@@ -190,7 +197,7 @@ struct TransferTests {
         )
 
         await #expect(throws: APIError.self) {
-            let _: UploadResult = try await service.upload(request: PostUpload(), data: Data())
+            let _: UploadResult = try await service.upload(PostUpload(), data: Data())
         }
         #expect(requestCount(host: host) == 1)
     }
@@ -352,6 +359,42 @@ struct TransferTests {
             !FileManager.default.fileExists(atPath: destination.path),
             "un download fallido no debe dejar nada en destination"
         )
+    }
+
+    /// CN-07: `download(_:to:)` pasa por `performWithRetry`, el mismo
+    /// pipeline que `execute`/`upload`/`data` — ya no es un único intento.
+    /// `InMemoryTransport` escribe `destination` en CADA intento (atómico),
+    /// así que el 500 inicial deja un fichero que el 200 siguiente sobrescribe.
+    @Test("download(to:) reintenta: secuencia [500, 200] en InMemoryTransport deja el fichero correcto tras 2 requests")
+    func downloadRetriesThroughFailureSequenceThenSucceeds() async throws {
+        let transport = InMemoryTransport()
+        let baseURL = URL(string: "https://xfer-download-retry.test")!
+        let payload = Data(#"{"ok":true}"#.utf8)
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: baseURL.appendingPathComponent("/file"),
+                responses: [.response(status: 500), .response(status: 200, body: payload)]
+            )
+        )
+        let configuration = NetworkingConfiguration(baseURL: baseURL)
+        let policy = RetryPolicy(maxAttempts: 2, initialDelay: .milliseconds(1), maxDelay: .milliseconds(10))
+        let clock = ManualClock()
+        let service = APIService(configuration: configuration, transport: transport, retryPolicy: policy, clock: clock)
+
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cn07-download-retry-\(UUID().uuidString).bin")
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let task = Task {
+            try await service.download(FileRequest(), to: destination, progress: nil)
+        }
+        await clock.waitUntilSleeping()
+        clock.advance(by: .seconds(10))
+        try await task.value
+
+        let written = try Data(contentsOf: destination)
+        #expect(written == payload)
+        #expect(await transport.recorded.count == 2)
     }
 
     @Test("download(to:) sustituye un fichero existente en destination")

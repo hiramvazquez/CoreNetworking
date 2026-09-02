@@ -82,7 +82,7 @@ struct CancellationTests {
         registerSlowMock(url: baseURL.appendingPathComponent("/slow"), method: .put)
 
         await expectCancelledFast {
-            let _: Payload = try await service.upload(request: SlowPut(), data: Data("x".utf8))
+            let _: Payload = try await service.upload(SlowPut(), data: Data("x".utf8))
         }
     }
 

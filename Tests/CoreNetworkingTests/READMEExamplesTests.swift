@@ -373,4 +373,15 @@ struct READMEMockAPIServiceTests {
             try await mock.execute(READMEExamples.DeleteGame(id: "1"))
         }
     }
+
+    @Test("execute sin stub registrado lanza .unstubbed, no .invalidResponse")
+    func executeWithoutStubThrowsUnstubbed() async {
+        let mock = MockAPIService()
+        do {
+            _ = try await mock.execute(READMEExamples.GetGames())
+            Issue.record("debía lanzar")
+        } catch {
+            #expect(error.code == .unstubbed, "esperaba .unstubbed, llegó \(error)")
+        }
+    }
 }

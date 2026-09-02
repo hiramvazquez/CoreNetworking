@@ -34,21 +34,40 @@ public protocol APIServiceProtocol: Sendable {
         as type: Value.Type
     ) async throws(APIError) -> Value
 
-    /// Uploads data with progress tracking.
+    /// Uploads `data` as `request`'s body and returns the decoded response.
     ///
-    /// Cancelling the surrounding `Task` cancels the transfer.
+    /// Same call shape as `execute(_:)`: the response type is not inferred at
+    /// the call site, it is `Request.Response`. Cancelling the surrounding
+    /// `Task` cancels the transfer.
     ///
     /// - Parameters:
-    ///   - request: The upload request configuration
-    ///   - data: Data to upload as the request body
-    ///   - progress: Closure called with upload progress (0.0 to 1.0)
-    /// - Returns: Decoded response of type `Response`
-    /// - Throws: `APIError` if the upload fails or the response cannot be decoded
-    func upload<Request: BaseRequest, Response: Decodable>(
-        request: Request,
+    ///   - request: The upload request configuration.
+    ///   - data: Data to upload as the request body.
+    ///   - progress: Closure called with upload progress (0.0 to 1.0).
+    /// - Returns: `request`'s declared `Response`, decoded.
+    /// - Throws: `APIError` if the upload fails or the response cannot be decoded.
+    func upload<Request: BaseRequest>(
+        _ request: Request,
         data: Data,
         progress: (@Sendable (Double) -> Void)?
-    ) async throws(APIError) -> Response
+    ) async throws(APIError) -> Request.Response
+
+    /// Uploads `data` as `request`'s body and decodes the response as `Type`,
+    /// overriding `Request.Response`. Same call shape as `execute(_:as:)`.
+    ///
+    /// - Parameters:
+    ///   - request: The upload request configuration.
+    ///   - data: Data to upload as the request body.
+    ///   - type: The type to decode instead of `Request.Response`.
+    ///   - progress: Closure called with upload progress (0.0 to 1.0).
+    /// - Returns: `type`, decoded.
+    /// - Throws: `APIError` if the upload fails or the response cannot be decoded.
+    func upload<Request: BaseRequest, Value: Decodable & Sendable>(
+        _ request: Request,
+        data: Data,
+        as type: Value.Type,
+        progress: (@Sendable (Double) -> Void)?
+    ) async throws(APIError) -> Value
 
     /// Fetches `request`'s response body entirely in memory, with progress
     /// tracking as it arrives.

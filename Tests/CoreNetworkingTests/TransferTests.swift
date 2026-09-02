@@ -150,7 +150,8 @@ struct TransferTests {
             _ = try await service.download(request: DownloadRequest(), progress: nil)
             Issue.record("debía fallar con 404")
         } catch {
-            #expect(error == .httpStatus(404, retryAfter: nil))
+            #expect(error.code == .httpStatus)
+            #expect(error.statusCode == 404)
         }
     }
 }

@@ -57,7 +57,8 @@ struct CancellationTests {
         case .success:
             Issue.record("la operación debía cancelarse, no completarse")
         case .failure(let error):
-            #expect(error as? APIError == .cancelled, "esperaba .cancelled, llegó \(error)")
+            let apiError = error as? APIError
+            #expect(apiError?.code == .cancelled, "esperaba .cancelled, llegó \(error)")
         }
         #expect(elapsed < .seconds(2), "la cancelación no fue inmediata (\(elapsed)) — la transferencia siguió viva")
     }

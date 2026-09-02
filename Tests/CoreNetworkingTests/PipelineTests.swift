@@ -79,23 +79,23 @@ struct PipelineTests {
         #expect(result.value == 1)
     }
 
-    @Test("200 con JSON inválido → .decodingError")
+    @Test("200 con JSON inválido → code == .decoding, con el body y el DecodingError conservados")
     func invalidJSONThrowsDecodingError() async throws {
         let (service, baseURL) = try makeService(host: "pipe-badjson.test")
+        let body = Data("no-json".utf8)
         MockURLProtocol.register(MockNetworkExchange(
             url: baseURL.appendingPathComponent("/sample"),
-            response: MockResponse(statusCode: 200, data: Data("no-json".utf8))
+            response: MockResponse(statusCode: 200, data: body)
         ))
 
         do {
             let _: SampleResponse = try await service.execute(request: SampleRequest())
-            Issue.record("debía lanzar decodingError")
+            Issue.record("debía lanzar .decoding")
         } catch {
-            // typed throws: error es APIError
-            guard case .decodingError = error else {
-                Issue.record("esperaba decodingError, llegó \(error)")
-                return
-            }
+            // typed throws: error ya es APIError
+            #expect(error.code == .decoding, "esperaba .decoding, llegó \(error)")
+            #expect(error.response?.body == body, "el body debe quedar disponible para diagnóstico")
+            #expect(error.underlying is DecodingError, "underlying debe ser el DecodingError original")
         }
     }
 
@@ -115,7 +115,7 @@ struct PipelineTests {
         #expect(count == 2)
     }
 
-    @Test("URL sin mock registrado falla con networkError (no cuelga)")
+    @Test("URL sin mock registrado falla con code == .transport (no cuelga)")
     func unmatchedURLFails() async throws {
         let (service, _) = try makeService(host: "pipe-unmatched.test")
 
@@ -123,10 +123,8 @@ struct PipelineTests {
             let _: SampleResponse = try await service.execute(request: SampleRequest())
             Issue.record("debía fallar")
         } catch {
-            guard case .networkError = error else {
-                Issue.record("esperaba networkError, llegó \(error)")
-                return
-            }
+            #expect(error.code == .transport, "esperaba .transport, llegó \(error)")
+            #expect(error.urlError != nil)
         }
     }
 }

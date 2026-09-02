@@ -133,7 +133,11 @@ struct PipelineIntegrationTests {
         let configuration = NetworkingConfiguration(
             baseURL: baseURL,
             defaultHeaders: ["X-App-Version": "1.0", "X-Default": "default"],
-            protocolClasses: [MockURLProtocol.self]
+            sessionConfiguration: {
+                let sessionConfiguration = URLSessionConfiguration.ephemeral
+                sessionConfiguration.protocolClasses = [MockURLProtocol.self]
+                return sessionConfiguration
+            }
         )
         return (APIService(configuration: configuration, retryPolicy: .noRetry), baseURL)
     }

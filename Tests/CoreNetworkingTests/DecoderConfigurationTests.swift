@@ -48,8 +48,12 @@ struct DecoderConfigurationTests {
         let baseURL = try #require(URL(string: "https://\(host)"))
         let configuration = NetworkingConfiguration(
             baseURL: baseURL,
-            protocolClasses: [MockURLProtocol.self],
-            makeDecoder: makeDecoder
+            makeDecoder: makeDecoder,
+            sessionConfiguration: {
+                let sessionConfiguration = URLSessionConfiguration.ephemeral
+                sessionConfiguration.protocolClasses = [MockURLProtocol.self]
+                return sessionConfiguration
+            }
         )
         return (APIService(configuration: configuration, retryPolicy: .noRetry), baseURL)
     }
@@ -113,7 +117,11 @@ struct DecoderConfigurationTests {
         let baseURL = try #require(URL(string: "https://decoder-default.test"))
         let configuration = NetworkingConfiguration(
             baseURL: baseURL,
-            protocolClasses: [MockURLProtocol.self]
+            sessionConfiguration: {
+                let sessionConfiguration = URLSessionConfiguration.ephemeral
+                sessionConfiguration.protocolClasses = [MockURLProtocol.self]
+                return sessionConfiguration
+            }
         )
         let api = APIService(configuration: configuration, retryPolicy: .noRetry)
         MockURLProtocol.register(

@@ -21,12 +21,17 @@ import Foundation
 /// ```
 ///
 /// ## Tests / Previews
-/// Inyecta `protocolClasses` para interceptar el tráfico con un `URLProtocol`
-/// de mock (p. ej. `MockURLProtocol` de `CoreNetworkingTestSupport`):
+/// Inyecta `sessionConfiguration` para interceptar el tráfico con un
+/// `URLProtocol` de mock (p. ej. `MockURLProtocol` de
+/// `CoreNetworkingTestSupport`):
 /// ```swift
 /// let configuration = NetworkingConfiguration(
 ///     baseURL: URL(string: "https://unit.test")!,
-///     protocolClasses: [MockURLProtocol.self]
+///     sessionConfiguration: {
+///         let sessionConfiguration = URLSessionConfiguration.ephemeral
+///         sessionConfiguration.protocolClasses = [MockURLProtocol.self]
+///         return sessionConfiguration
+///     }
 /// )
 /// ```
 public struct NetworkingConfiguration: Sendable {
@@ -39,7 +44,16 @@ public struct NetworkingConfiguration: Sendable {
 
     /// Clases `URLProtocol` a instalar en la `URLSession` del servicio.
     /// Pensado para inyectar mocks en tests/previews. `nil` = tráfico real.
-    public let protocolClasses: [URLProtocol.Type]?
+    @available(*, deprecated, message: "Configura protocolClasses en sessionConfiguration")
+    public var protocolClasses: [URLProtocol.Type]? { legacyProtocolClasses }
+
+    /// Almacenamiento real de `protocolClasses` (arriba). Vive sin la
+    /// anotación de deprecación porque el paquete SIGUE necesitando leerlo
+    /// mientras exista — la convenience `init` de `APIService` lo fusiona en
+    /// `sessionConfiguration` para que lo que alguien pase aquí siga
+    /// funcionando —: lo deprecado es la LECTURA pública, no el dato que la
+    /// sostiene por dentro.
+    let legacyProtocolClasses: [URLProtocol.Type]?
 
     /// Fábrica del `JSONDecoder` con el que se decodifican las respuestas.
     ///
@@ -73,6 +87,11 @@ public struct NetworkingConfiguration: Sendable {
     /// argumento de aislamiento por request no aplica aquí — es, simplemente,
     /// el mismo punto de entrada que el resto de la configuración inyectada.
     ///
+    /// Es también, hoy, el único punto de entrada real para instalar un
+    /// `URLProtocol` de mock: `protocolClasses` (arriba) queda deprecado en
+    /// favor de esto — una sola forma de hacerlo, no dos que conviven. Ver el
+    /// bloque "Tests / Previews" en el doc del tipo.
+    ///
     /// El default (`defaultSessionConfiguration`) activa `waitsForConnectivity`
     /// (esperar a que vuelva la red en vez de fallar al instante — es la
     /// alternativa correcta a reintentar `notConnectedToInternet`, ver
@@ -83,10 +102,6 @@ public struct NetworkingConfiguration: Sendable {
     public let sessionConfiguration: @Sendable () -> URLSessionConfiguration
 
     /// La `URLSessionConfiguration` por defecto de este paquete.
-    ///
-    /// NOTA (CN-03): hoy la construye `APIService.init`. `CN-03` reubica esa
-    /// construcción en `URLSessionTransport`; esta fábrica es el punto de
-    /// inyección que sobrevive a ese cambio.
     public static func defaultSessionConfiguration() -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.default
         configuration.waitsForConnectivity = true
@@ -118,7 +133,7 @@ public struct NetworkingConfiguration: Sendable {
         )
         self.baseURL = baseURL
         self.defaultHeaders = defaultHeaders
-        self.protocolClasses = protocolClasses
+        self.legacyProtocolClasses = protocolClasses
         self.makeDecoder = makeDecoder
         self.makeEncoder = makeEncoder
         self.sessionConfiguration = sessionConfiguration

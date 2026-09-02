@@ -112,17 +112,16 @@ do {
     let games: [Game] = try await service.execute(request: GetGamesRequest())
 } catch {
     // typed throws: `error` ya es APIError
-    switch error {
-    case .networkError(let urlError): ...
-    case .httpStatus(let code, _), .custom(_, let code, _): ...
-    default: ...
+    switch error.category {
+    case .offline: showOfflineBanner()
+    case .unauthorized: relaunchLogin()
+    default: show(error.localizedDescription)
     }
 }
 ```
 
-`APIError` expone `statusCode`, `isRetryable`, `retryAfterDelay`,
-`underlyingError` y una `description` técnica. El copy de cara al usuario es
-responsabilidad de la app consumidora.
+Ver la sección [Errores](#errores) para el detalle de `code`, `category` y
+`decodeBody`.
 
 ### Upload / Download
 
@@ -141,6 +140,71 @@ transferencia. Ambos pasan por el mismo pipeline que `execute` (interceptores,
 retry, mapeo de errores). El progreso de download solo emite fracciones si el
 servidor manda `Content-Length` (siempre emite 1.0 al terminar).
 
+## Errores
+
+Un único tipo, `APIError` (struct, no enum): conserva **todo** — lo que se
+pidió (`request`), todo lo que dijo el servidor (`response`: status, headers
+y body sin tocar) y el error de debajo (`underlying`: `URLError`,
+`DecodingError`, `EncodingError`, o lo que sea que un `URLProtocol`
+produjera). Nada se descarta camino arriba. `TransportError` no existe: era
+un segundo `Error` público para la misma capa que además colapsaba 401 y 403
+en el mismo caso.
+
+```swift
+do {
+    let games: [Game] = try await service.execute(request: GetGamesRequest())
+} catch {
+    switch error.category {
+    case .offline:          showOfflineBanner()
+    case .unauthorized:     relaunchLogin()
+    case .untrustedServer:  showInsecureConnection()
+    default:
+        if let problem = try? error.decodeBody(MyServerProblem.self) {
+            show(problem.detail)
+        } else {
+            show(error.localizedDescription)
+        }
+    }
+}
+```
+
+- **`code`** (`APIError.Code`): qué pasó, como conjunto abierto —
+  `.invalidURL`, `.invalidResponse`, `.transport`, `.cancelled`,
+  `.untrustedServer`, `.httpStatus`, `.encoding`, `.decoding`,
+  `.interceptor`, `.unexpected`. Un `Code` nuevo **no** rompe a los
+  consumidores: no hagas `switch` exhaustivo sobre `code`, compáralo contra
+  los estáticos que conoces y cae a `default`.
+- **`category`**: clasificación cerrada y de más alto nivel para
+  presentación/política — `.offline`, `.timeout`, `.unauthorized`,
+  `.forbidden`, `.notFound`, `.rateLimited`, `.client`, `.server`,
+  `.untrustedServer`, `.cancelled`, `.decoding`, `.unknown`. 401 y 403 son
+  categorías distintas (`.unauthorized` vs. `.forbidden`): la UI las trata
+  distinto (relanzar login no es lo mismo que "no tienes permiso").
+- **`decodeBody<T>(_:using:)`**: la app decodifica **su propio** sobre de
+  error con **su propio** `JSONDecoder` — `{"message"}`, RFC 9457
+  `problem+json`, errores de validación por campo, lo que sea. El paquete
+  nunca interpreta el body del servidor, solo lo conserva en `response.body`.
+- **`isCancellation`**: `true` solo para `code == .cancelled` (cancelación
+  del llamador). Nunca se confunde con `.untrustedServer` (pinning).
+- **`isRetryable`** / **`retryAfter`**: ver [Retry](#retry).
+- **`statusCode`**, **`urlError`**: atajos sobre `response`/`underlying`.
+- `errorDescription` (`LocalizedError`) es una frase neutra y localizable
+  (inglés/español vía el string catalog del paquete) por `category` — nunca
+  un código pelado tipo "error 9". Es un fallback técnico; el copy real de
+  cara al usuario sigue siendo responsabilidad de la app.
+
+**Política de evolución**: `APIError` no es `Equatable` a propósito — un
+`==` que ignorase `underlying` (un `any Error`) mentiría. Compara `code`,
+`statusCode` o `category`. Para stubear en tests, usa
+`CoreNetworkingTestSupport`:
+
+```swift
+import CoreNetworkingTestSupport
+
+let error = APIError.stub(code: .httpStatus, statusCode: 422, body: bodyData)
+#expect(error.code == .httpStatus)
+```
+
 ## Retry
 
 ```swift
@@ -153,9 +217,24 @@ let service = APIService(
 - `maxAttempts` = requests TOTALES (3 ⇒ como mucho 3 requests). `.noRetry` = 1.
 - Solo métodos idempotentes reintentan por defecto; POST/PATCH requieren
   `allowsNonIdempotentRetry = true` en el request.
-- Retryable: errores transitorios de transporte y HTTP 5xx / 408 / 429.
+- Retryable por defecto (`APIError.isRetryable`): errores transitorios de
+  transporte (`timedOut`, `networkConnectionLost`, `cannotConnectToHost`,
+  `dnsLookupFailed`, `cannotFindHost` — **no** `notConnectedToInternet`: sin
+  red no hay nada que reintentar en medio segundo) y HTTP 5xx / 408 / 429.
 - Backoff exponencial con equal jitter; un `Retry-After` del servidor
   (segundos u HTTP-date) manda sobre el backoff.
+- El criterio es un predicado inyectable y tipado:
+  ```swift
+  public let shouldRetry: @Sendable (APIError, Int) -> Bool
+  ```
+  Recibe el `APIError` (así puede mirar `code`, `statusCode`, `urlError` o el
+  body del servidor sin castear) y el número de intentos ya hechos. Por
+  defecto es `APIError.isRetryable`; pásalo para, por ejemplo, no reintentar
+  nunca un método propio:
+  ```swift
+  RetryPolicy(shouldRetry: { error, _ in error.isRetryable && error.code != .interceptor })
+  ```
+  `RetryPolicy` no es `Equatable` a propósito: `shouldRetry` es un closure.
 
 ## SSL Pinning
 
@@ -187,13 +266,15 @@ Soportado: RSA-2048/4096, EC P-256/P-384.
 public protocol RequestInterceptor: Sendable {
     func willSend(_ request: URLRequest) async -> URLRequest
     func didReceive(_ response: URLResponse, data: Data) async
-    func didFail(_ request: URLRequest, error: Error) async
+    func didFail(_ request: URLRequest, error: APIError) async
 }
 ```
 
-Se invocan en orden. `didFail` se notifica en TODOS los caminos de error del
-pipeline (transporte, respuesta inválida, non-2xx). Los errores de
-decodificación ocurren después del pipeline y no pasan por interceptores.
+Se invocan en orden. `didFail` recibe siempre el `APIError` ya mapeado (no
+`Error`), así que puede leer `code`, `statusCode` o `response` sin castear.
+Se notifica en TODOS los caminos de error del pipeline (transporte, respuesta
+inválida, non-2xx). Los errores de decodificación ocurren después del
+pipeline y no pasan por interceptores.
 
 `LoggingInterceptor` (incluido) loguea vía `os.Logger`; los headers sensibles
 (Authorization, Cookie, api keys, tokens…) se redactan SIEMPRE — no hay opción

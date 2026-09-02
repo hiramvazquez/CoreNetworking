@@ -41,12 +41,13 @@ public protocol RequestInterceptor: Sendable {
     func didReceive(_ response: URLResponse, data: Data) async
 
     /// Called when a request fails — transport errors, invalid responses AND
-    /// non-2xx statuses (the mapped `APIError`).
+    /// non-2xx statuses. Always the mapped `APIError`, so implementations can
+    /// read `code`, `statusCode` or `response` without casting.
     ///
     /// - Parameters:
     ///   - request: The original request
     ///   - error: The error that occurred
-    func didFail(_ request: URLRequest, error: Error) async
+    func didFail(_ request: URLRequest, error: APIError) async
 }
 
 // MARK: - Default Implementations
@@ -60,15 +61,15 @@ public extension RequestInterceptor {
         // Default: no-op
     }
 
-    func didFail(_ request: URLRequest, error: Error) async {
+    func didFail(_ request: URLRequest, error: APIError) async {
         // Default: no-op
     }
 }
 
 // MARK: - Built-in Logging Interceptor
 
-/// Logs requests and responses through `os.Logger` (subsystem "CoreNetworking",
-/// category "network").
+/// Logs requests and responses through `os.Logger` (subsystem
+/// "<bundle id>.corenetworking", category "network").
 ///
 /// Privacy rules (not configurable):
 /// - Sensitive headers (Authorization, Cookie, Set-Cookie, api keys, tokens…)
@@ -125,9 +126,14 @@ public struct LoggingInterceptor: RequestInterceptor {
         #endif
     }
 
-    public func didFail(_ request: URLRequest, error: Error) async {
+    public func didFail(_ request: URLRequest, error: APIError) async {
         let url = request.url?.absoluteString ?? "<no url>"
-        NetLog.network.error("✗ \(url, privacy: .private) — \(String(describing: error), privacy: .public)")
+        // Solo `code` y `statusCode` son públicos: ni el body ni `underlying`
+        // salen con `.public` (pueden llevar texto del servidor o del error).
+        let status = error.statusCode.map(String.init) ?? "-"
+        NetLog.network.error(
+            "✗ \(url, privacy: .private) — code: \(error.code.rawValue, privacy: .public) status: \(status, privacy: .public)"
+        )
     }
 }
 

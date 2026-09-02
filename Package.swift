@@ -28,6 +28,7 @@ if modoEstricto {
 
 let package = Package(
     name: "CoreNetworking",
+    defaultLocalization: "en",
     platforms: [
         .iOS(.v17),
         .macOS(.v14)
@@ -41,6 +42,7 @@ let package = Package(
     targets: [
         .target(
             name: "CoreNetworking",
+            resources: [.process("Resources")],
             swiftSettings: swiftSettings
         ),
         .target(

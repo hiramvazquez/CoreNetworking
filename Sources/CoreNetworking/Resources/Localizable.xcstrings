@@ -1,0 +1,90 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "error.cancelled" : {
+      "comment" : "APIError.category == .cancelled",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The operation was cancelled." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "La operación se canceló." } }
+      }
+    },
+    "error.client" : {
+      "comment" : "APIError.category == .client. %lld = HTTP status",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The request could not be processed (%lld)." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo procesar la petición (%lld)." } }
+      }
+    },
+    "error.decoding" : {
+      "comment" : "APIError.category == .decoding",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The server's response could not be read." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo leer la respuesta del servidor." } }
+      }
+    },
+    "error.forbidden" : {
+      "comment" : "APIError.category == .forbidden (HTTP 403)",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "You do not have permission to do this." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No tienes permiso para hacer esto." } }
+      }
+    },
+    "error.notFound" : {
+      "comment" : "APIError.category == .notFound (HTTP 404)",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The requested resource was not found." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se encontró el recurso solicitado." } }
+      }
+    },
+    "error.offline" : {
+      "comment" : "APIError.category == .offline",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No internet connection." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No hay conexión a internet." } }
+      }
+    },
+    "error.rateLimited" : {
+      "comment" : "APIError.category == .rateLimited (HTTP 429)",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Too many requests. Please try again later." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Demasiadas peticiones. Inténtalo de nuevo más tarde." } }
+      }
+    },
+    "error.server" : {
+      "comment" : "APIError.category == .server. %lld = HTTP status",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Server error (%lld)." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Error del servidor (%lld)." } }
+      }
+    },
+    "error.timeout" : {
+      "comment" : "APIError.category == .timeout",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The server did not respond in time." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "El servidor no respondió a tiempo." } }
+      }
+    },
+    "error.unauthorized" : {
+      "comment" : "APIError.category == .unauthorized (HTTP 401)",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your session has expired. Please sign in again." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Tu sesión ha caducado. Inicia sesión de nuevo." } }
+      }
+    },
+    "error.unknown" : {
+      "comment" : "APIError.category == .unknown",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Something went wrong. Please try again." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Algo ha fallado. Inténtalo de nuevo." } }
+      }
+    },
+    "error.untrustedServer" : {
+      "comment" : "APIError.category == .untrustedServer (TLS pinning rejected the certificate)",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The server's identity could not be verified." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo verificar la identidad del servidor." } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

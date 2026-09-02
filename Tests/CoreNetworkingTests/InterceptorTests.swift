@@ -23,9 +23,9 @@ actor InterceptorSpy: RequestInterceptor {
         await record("\(label).didReceive")
     }
 
-    nonisolated func didFail(_ request: URLRequest, error: Error) async {
-        let apiError = error as? APIError
-        await record("\(label).didFail(\(apiError.map(String.init(describing:)) ?? "otro"))")
+    nonisolated func didFail(_ request: URLRequest, error: APIError) async {
+        let status = error.statusCode.map(String.init) ?? "-"
+        await record("\(label).didFail(code: \(error.code), status: \(status))")
     }
 }
 
@@ -83,7 +83,7 @@ struct InterceptorTests {
         }
 
         let events = await spy.events
-        #expect(events.contains("s.didFail(APIError.httpStatus(503))"),
+        #expect(events.contains("s.didFail(code: httpStatus, status: 503)"),
                 "didFail no se notificó para el error de status — eventos: \(events)")
         // didReceive también se llamó (la respuesta llegó): ambos son parte del contrato.
         #expect(events.first == "s.willSend")
@@ -105,23 +105,14 @@ struct InterceptorTests {
         }
 
         let events = await spy.events
-        #expect(events.contains { $0.hasPrefix("s.didFail(APIError.networkError") },
+        #expect(events.contains("s.didFail(code: transport, status: -)"),
                 "didFail no se notificó para el error de transporte — eventos: \(events)")
     }
 }
 
-@Suite("APIError: igualdad reflexiva (M6)")
-struct APIErrorEqualityTests {
-    @Test("decodingError == decodingError (igualdad por caso, documentada)")
-    func decodingErrorIsReflexive() {
-        let error = APIError.decodingError(.dataCorrupted(.init(codingPath: [], debugDescription: "x")))
-        #expect(error == error, "un error debe ser igual a sí mismo (reflexividad)")
-    }
-
-    @Test("encodingError == encodingError (igualdad por caso, documentada)")
-    func encodingErrorIsReflexive() {
-        let context = EncodingError.Context(codingPath: [], debugDescription: "x")
-        let error = APIError.encodingError(.invalidValue(0, context))
-        #expect(error == error, "un error debe ser igual a sí mismo (reflexividad)")
-    }
-}
+// NOTA: la suite `APIErrorEqualityTests` (M6) se borró en vez de arreglarse.
+// Probaba `error == error` sobre `APIError`, y `APIError` dejó de ser
+// `Equatable` a propósito en CN-01 (un `==` que ignorara `underlying` — un
+// `any Error` — mentiría). La reflexividad de identidad no aporta nada sobre
+// un tipo que ya no se compara; `APIErrorTests.swift` cubre `code`,
+// `category` y `decodeBody` directamente.

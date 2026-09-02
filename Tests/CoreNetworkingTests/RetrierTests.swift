@@ -48,6 +48,13 @@ private actor Counter {
     func increment() { value += 1 }
 }
 
+/// El closure de refresh necesita observar al propio `TokenRefresher` que lo
+/// ejecuta; la caja rompe la dependencia circular en la construcción.
+private actor RefresherBox {
+    private(set) var refresher: TokenRefresher?
+    func set(_ refresher: TokenRefresher) { self.refresher = refresher }
+}
+
 @Suite("RequestRetrier / TokenRefreshRetrier: decisión de reintento")
 struct RetrierTests {
     private struct GetRequest: BaseRequest {
@@ -95,18 +102,23 @@ struct RetrierTests {
         let tokenBox = TokenBox("old-token")
         let transport = HeaderGatedTransport(validToken: "new-token")
         let refreshCount = Counter()
+        let refresherBox = RefresherBox()
         let refresher = TokenRefresher {
             await refreshCount.increment()
-            // Latencia simulada (ver `TokenRefresherTests.dedupesConcurrentCalls`
-            // para el mismo razonamiento): sin ella, un refresh que resuelve
-            // "instantáneo" puede terminar y liberar `inFlight` antes de que
-            // las otras 9 requests, que también acaban de recibir su propio
-            // 401, lleguen a consultar al retrier — y entonces SÍ dispararían
-            // un segundo refresh (correcto por diseño: `TokenRefresher` solo
-            // deduplica refreshes que se SOLAPAN, no "uno por sesión").
-            try await Task.sleep(for: .milliseconds(20))
+            // Solape DETERMINISTA, sin `sleep`: el refresh no termina hasta que
+            // las otras 9 requests (que reciben su 401 mientras el token siga
+            // siendo el viejo) se han enganchado al refresh en vuelo. Todas
+            // llegarán, porque el token no cambia hasta que este closure
+            // acaba; `Task.yield()` solo cede el turno mientras tanto.
+            // `TokenRefresher` deduplica refreshes que se SOLAPAN, no "uno por
+            // sesión": este test garantiza el solape en vez de confiar en el
+            // scheduler.
+            while await refresherBox.refresher?.joinedInFlightCount ?? 0 < 9 {
+                await Task.yield()
+            }
             await tokenBox.set("new-token")
         }
+        await refresherBox.set(refresher)
         let interceptor = BearerTokenInterceptor { await tokenBox.token }
         let retrier = TokenRefreshRetrier(refresher: refresher)
         // `initialDelay`/`maxDelay` en CERO: `jitteredDelay` devuelve `.zero`
@@ -135,11 +147,9 @@ struct RetrierTests {
             }
         }
 
-        // La propiedad bajo prueba es la deduplicación, no el número exacto
-        // de requests: cuántas de las 10 llegan a ver el 401 antes de que el
-        // refresh termine depende del scheduler. `refreshCount == 1` es
-        // cierto pase lo que pase con ese entrelazado.
         #expect(await refreshCount.value == 1, "10 401 concurrentes deben deduplicarse en UN único refresh")
+        #expect(await refresher.joinedInFlightCount == 9)
+        #expect(await transport.requestCount == 20, "10 requests con 401 + 10 reintentos con el token nuevo")
         #expect(await tokenBox.token == "new-token")
     }
 

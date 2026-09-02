@@ -15,14 +15,18 @@ struct TokenRefresherTests {
     @Test("10 llamadas concurrentes ejecutan `refresh` UNA sola vez")
     func dedupesConcurrentCalls() async throws {
         let counter = Counter()
+        let refresherBox = RefresherBox()
         let refresher = TokenRefresher {
             await counter.increment()
-            // Latencia simulada: da tiempo a que las otras 9 llamadas
-            // lleguen y encuentren `inFlight` ya activo antes de que este
-            // refresh termine — sin esto el test podría "pasar" sin probar
-            // realmente la deduplicación bajo solape.
-            try await Task.sleep(for: .milliseconds(20))
+            // Solape determinista, sin `sleep`: este refresh no termina hasta
+            // que las otras 9 llamadas se han enganchado a él. Así el test
+            // prueba la deduplicación bajo solape real, pase lo que pase con
+            // el scheduler.
+            while await refresherBox.refresher?.joinedInFlightCount ?? 0 < 9 {
+                await Task.yield()
+            }
         }
+        await refresherBox.set(refresher)
 
         try await withThrowingTaskGroup(of: Void.self) { group in
             for _ in 0..<10 {
@@ -32,6 +36,7 @@ struct TokenRefresherTests {
         }
 
         #expect(await counter.value == 1)
+        #expect(await refresher.joinedInFlightCount == 9)
     }
 
     @Test("tras completar, la siguiente llamada dispara un refresh NUEVO")
@@ -81,4 +86,9 @@ struct TokenRefresherTests {
         }
         #expect(await counter.value == 2)
     }
+}
+
+private actor RefresherBox {
+    private(set) var refresher: TokenRefresher?
+    func set(_ refresher: TokenRefresher) { self.refresher = refresher }
 }

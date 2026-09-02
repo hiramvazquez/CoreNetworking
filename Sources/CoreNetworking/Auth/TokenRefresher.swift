@@ -39,12 +39,19 @@ public actor TokenRefresher: TokenRefreshing {
     private let refresh: @Sendable () async throws -> Void
     private var inFlight: Task<Void, any Error>?
 
+    /// Cuántas llamadas se engancharon a un refresh que ya estaba en vuelo en
+    /// vez de iniciar uno propio. Observabilidad (y lo que permite que los
+    /// tests de deduplicación esperen a que el solape ocurra de verdad en
+    /// lugar de simularlo con `sleep`).
+    public private(set) var joinedInFlightCount = 0
+
     public init(refresh: @escaping @Sendable () async throws -> Void) {
         self.refresh = refresh
     }
 
     public func refreshToken() async throws {
         if let inFlight {
+            joinedInFlightCount += 1
             try await inFlight.value
             return
         }

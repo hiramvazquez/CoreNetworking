@@ -61,7 +61,10 @@ struct PinningDelegateTests {
     ///  | openssl dgst -sha256 -binary | base64`
     private static let pinDelCertificado = "+lD8v37mBY5UxmpJvlpNcZPaSN9r1/XEZI8gAftIFjc="
 
-    private static let otroPin = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    /// Dos pins ajenos (32 bytes cada uno): el constructor exige un pin de
+    /// respaldo (RFC 7469), así que nunca se puede pasar uno solo.
+    private static let otroPin = Data(repeating: 0x00, count: 32).base64EncodedString()
+    private static let otroPinDeRespaldo = Data(repeating: 0xFF, count: 32).base64EncodedString()
 
     private func trustDePrueba() throws -> SecTrust {
         let der = try #require(Data(base64Encoded: Self.certificadoDER))
@@ -136,9 +139,9 @@ struct PinningDelegateTests {
     func pinQueNoCoincideCancela() async throws {
         let trust = try trustDePrueba()
         let pinning = SSLPinningConfiguration(
-            publicKeyHashes: [Self.otroPin],
-            pinnedHosts: ["pinning.test"],
-            validateCertificateChain: false   // el cert es autofirmado: la cadena no evalúa
+            publicKeyHashes: [Self.otroPin, Self.otroPinDeRespaldo],
+            hosts: .only(["pinning.test"]),
+            chainValidation: .unsafeSkipForDevelopment   // el cert es autofirmado: la cadena no evalúa
         )
         let (disposition, credential) = await decidir(
             pinning: pinning,
@@ -154,9 +157,9 @@ struct PinningDelegateTests {
     func pinQueCoincideAcepta() async throws {
         let trust = try trustDePrueba()
         let pinning = SSLPinningConfiguration(
-            publicKeyHashes: [Self.pinDelCertificado],
-            pinnedHosts: ["pinning.test"],
-            validateCertificateChain: false
+            publicKeyHashes: [Self.pinDelCertificado, Self.otroPinDeRespaldo],
+            hosts: .only(["pinning.test"]),
+            chainValidation: .unsafeSkipForDevelopment
         )
         let (disposition, credential) = await decidir(
             pinning: pinning,
@@ -172,9 +175,9 @@ struct PinningDelegateTests {
     func hostNoPinneadoDelegaEnElSistema() async throws {
         let trust = try trustDePrueba()
         let pinning = SSLPinningConfiguration(
-            publicKeyHashes: [Self.pinDelCertificado],
-            pinnedHosts: ["otro.host"],
-            validateCertificateChain: false
+            publicKeyHashes: [Self.pinDelCertificado, Self.otroPinDeRespaldo],
+            hosts: .only(["otro.host"]),
+            chainValidation: .unsafeSkipForDevelopment
         )
         let (disposition, credential) = await decidir(
             pinning: pinning,
@@ -203,8 +206,8 @@ struct PinningDelegateTests {
     @Test("challenge que no es server-trust → lo decide el sistema")
     func challengeQueNoEsServerTrust() async throws {
         let pinning = SSLPinningConfiguration(
-            publicKeyHashes: [Self.pinDelCertificado],
-            pinnedHosts: nil                     // pinnearía TODO host…
+            publicKeyHashes: [Self.pinDelCertificado, Self.otroPinDeRespaldo],
+            hosts: .all                          // pinnearía TODO host…
         )
         let (disposition, credential) = await decidir(
             pinning: pinning,
@@ -222,7 +225,10 @@ struct PinningDelegateTests {
     /// aceptar nada; delega.
     @Test("server-trust sin trust → lo decide el sistema, sin crash")
     func serverTrustSinTrust() async {
-        let pinning = SSLPinningConfiguration(publicKeyHashes: [Self.pinDelCertificado], pinnedHosts: nil)
+        let pinning = SSLPinningConfiguration(
+            publicKeyHashes: [Self.pinDelCertificado, Self.otroPinDeRespaldo],
+            hosts: .all
+        )
         let (disposition, credential) = await decidir(
             pinning: pinning,
             espacio: EspacioConTrust(trust: nil, host: "pinning.test")

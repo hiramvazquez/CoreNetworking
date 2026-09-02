@@ -6,7 +6,6 @@ import Testing
 @testable import APIClientApp
 
 @Suite struct GamesClientTests {
-
     @Test func fetchGamesMapsDTOToDomain() async throws {
         let mock = MockAPIService()
         mock.stub(GetGames.self, returning: GetGames.Response(games: [GameDTO(id: "1", title: "Chess")]))
@@ -44,9 +43,10 @@ import Testing
                 url: URL(string: "https://unit.test/games")!,
                 responses: [
                     .response(status: 500),
-                    .response(status: 200, body: Data(#"{"games":[{"id":"1","title":"Chess"}]}"#.utf8)),
+                    .response(status: 200, body: Data(#"{"games":[{"id":"1","title":"Chess"}]}"#.utf8))
                 ]
-            ))
+            )
+        )
 
         let clock = ManualClock()
         let service = APIService(

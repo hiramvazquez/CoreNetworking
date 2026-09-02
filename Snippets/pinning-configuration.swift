@@ -6,7 +6,7 @@ import Foundation
 let pinning = SSLPinningConfiguration(
     publicKeyHashes: [
         "r/mIkG3eEpVdm+u/ko/cwxzOMo1bk4TyHIlByibiA5E=",  // clave actual
-        "Vjs8r4z+80wjNcr1YKepWQboSIRi63WsWXhIMN+eWys=",  // pin de respaldo
+        "Vjs8r4z+80wjNcr1YKepWQboSIRi63WsWXhIMN+eWys="  // pin de respaldo
     ],
     hosts: .only(["api.miapp.com"])
 )

@@ -72,8 +72,14 @@ public final class APIService: APIServiceProtocol {
     /// Convenience: builds a `URLSessionTransport` from `configuration` and
     /// `sslPinning` — same call shape as before `HTTPTransport` existed.
     ///
-    /// - Parameter sslPinning: SSL pinning configuration (default: none —
-    ///   system TLS validation only).
+    /// - Parameters:
+    ///   - configuration: Immutable networking configuration; its
+    ///     `sessionConfiguration` factory builds the `URLSession`.
+    ///   - retryPolicy: Retry configuration.
+    ///   - interceptors: Request/Response interceptors (invoked in order).
+    ///   - retriers: Consulted before `retryPolicy` on every failed attempt.
+    ///   - sslPinning: SSL pinning configuration (default: none —
+    ///     system TLS validation only).
     public convenience init(
         configuration: NetworkingConfiguration,
         retryPolicy: RetryPolicy = RetryPolicy(),

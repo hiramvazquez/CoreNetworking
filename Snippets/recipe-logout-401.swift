@@ -24,7 +24,11 @@ actor SessionStore {
     }
 }
 
-func makeAuthenticatedService(baseURL: URL, sessionStore: SessionStore, authClient: @escaping @Sendable () async throws -> String) -> APIService {
+func makeAuthenticatedService(
+    baseURL: URL,
+    sessionStore: SessionStore,
+    authClient: @escaping @Sendable () async throws -> String
+) -> APIService {
     let refresher = TokenRefresher {
         do {
             let newToken = try await authClient()

@@ -20,9 +20,10 @@ func retryEventuallySucceeds() async throws {
             responses: [
                 .response(status: 500),
                 .response(status: 500),
-                .response(status: 200, body: Data(#"{"games":["chess"]}"#.utf8)),
+                .response(status: 200, body: Data(#"{"games":["chess"]}"#.utf8))
             ]
-        ))
+        )
+    )
 
     let clock = ManualClock()
     let service = APIService(

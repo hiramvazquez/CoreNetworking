@@ -84,7 +84,7 @@ struct PinningDelegateTests {
     /// forma de construir el challenge que el delegado recibe en producción —
     /// y sin poder construirlo, este método simplemente no se podía probar,
     /// que es exactamente por qué no estaba probado.
-    private final class EspacioConTrust: URLProtectionSpace {
+    private final class EspacioConTrust: URLProtectionSpace, @unchecked Sendable {
         private let trust: SecTrust?
         private let metodo: String
 

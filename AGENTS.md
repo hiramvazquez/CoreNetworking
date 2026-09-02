@@ -66,5 +66,8 @@ desde el Logic — este paquete nunca interpreta el body, solo lo conserva.
 - No agregues un segundo `BaseRequest` genérico con parámetros para "ahorrar" tipos: un
   endpoint, un `BaseRequest`, un Service que lo llama.
 
-Ver también: `AppFoundation/AGENTS.md` (capas View/ViewModel/Logic) y
-`AppFoundation/Examples/LoginApp` (el Service de referencia, con sus tres niveles de test).
+Ver también: `AppFoundation/AGENTS.md` (capas View/ViewModel/Logic),
+`AppFoundation/Examples/LoginApp` (el Service de referencia, con sus tres niveles de test),
+`Examples/APIClientApp` (un consumidor mínimo, sin AppFoundation) y
+`Sources/CoreNetworking/Documentation.docc/` (Xcode: **Product ▸ Build Documentation**)
+para la referencia completa por pieza, con ejemplos que compilan (`Snippets/`).

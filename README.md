@@ -71,7 +71,7 @@ catch {
 // 6. Testear sin red
 import CoreNetworkingTestSupport
 let mock = MockAPIService()
-mock.stub(GetGames.self, returning: .init(games: ["chess"]))
+mock.stub(GetGames.self, returning: GetGames.Response(games: ["chess"]))
 ```
 
 ## Más

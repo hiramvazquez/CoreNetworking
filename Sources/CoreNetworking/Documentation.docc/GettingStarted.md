@@ -16,18 +16,19 @@ let package = Package(
     platforms: [.iOS(.v17), .macOS(.v14)],
     products: [.library(name: "MiApp", targets: ["MiApp"])],
     dependencies: [
-        .package(url: "https://github.com/hiram0816/spm-pro.git", from: "1.0.0")
+        // Cada paquete se publica en su propio repositorio (subtree split); sustituye la URL por la real.
+    .package(url: "https://github.com/hiram0816/CoreNetworking.git", from: "1.0.0")
     ],
     targets: [
         .target(
             name: "MiApp",
-            dependencies: [.product(name: "CoreNetworking", package: "spm-pro")]
+            dependencies: [.product(name: "CoreNetworking", package: "CoreNetworking")]
         ),
         .testTarget(
             name: "MiAppTests",
             dependencies: [
                 "MiApp",
-                .product(name: "CoreNetworkingTestSupport", package: "spm-pro")
+                .product(name: "CoreNetworkingTestSupport", package: "CoreNetworking")
             ]
         )
     ]

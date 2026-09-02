@@ -9,7 +9,7 @@ import Foundation
 /// instance owned by one test: no cross-test contamination, no "one host per
 /// test" discipline needed. It also supports SEQUENCES of responses per
 /// request (500 → 500 → 200), which `MockURLProtocol` cannot — the exact gap
-/// that made "retry that eventually succeeds" untestable before CN-03.
+/// that used to make "retry that eventually succeeds" untestable.
 ///
 /// `actor`, not a lock-guarded class: the state (registered exchanges,
 /// recorded requests) is genuinely shared mutable state between the test and

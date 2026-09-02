@@ -8,7 +8,7 @@ import os
 /// error a caller gets from cancelling the `Task` — so `URLSessionTransport`
 /// catches it, checks `TaskDelegate.pinningFailed`, and throws THIS instead:
 /// `APIService` maps it to `APIError(code: .untrustedServer)` without ever
-/// confusing a rejected certificate with a cancelled request (CN-01).
+/// confusing a rejected certificate with a cancelled request.
 ///
 /// `public` so `CoreNetworkingTestSupport.InMemoryTransport` — a different
 /// module, without `@testable` access — can simulate the exact failure a
@@ -31,7 +31,7 @@ public struct PinningFailure: Error, Sendable {
 ///   task's challenge was the one pinning rejected, without any shared state
 ///   between concurrent transfers.
 /// - `didSendBodyData:` / `didReceive data:` — upload and in-memory download
-///   progress, merged from CN-03's `TransferProgressDelegate` (`send`).
+///   progress, both reported through `send`.
 /// - `didWriteData:` / `didFinishDownloadingTo:` — the
 ///   `URLSessionDownloadDelegate` side of download-to-disk progress and
 ///   completion. Kept for the completion-handler-based download APIs and any
@@ -107,9 +107,8 @@ final class TaskDelegate: NSObject, URLSessionTaskDelegate, URLSessionDataDelega
 
         // 3 estados: notApplicable → validación TLS por defecto del sistema;
         // validated → credencial; failed → cancelar Y recordar que fuimos
-        // NOSOTROS quienes cancelamos (esto es lo que CN-01 arregla: sin
-        // recordarlo, `URLError(.cancelled)` es indistinguible de que el
-        // llamador canceló el `Task`).
+        // NOSOTROS quienes cancelamos: sin recordarlo, `URLError(.cancelled)`
+        // es indistinguible de que el llamador canceló el `Task`.
         let result = pinning.validate(serverTrust: serverTrust, host: challenge.protectionSpace.host)
         if result == .failed {
             state.withLock { $0.pinningFailed = true }

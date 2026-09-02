@@ -4,13 +4,12 @@ import os
 /// Production `HTTPTransport`: one `URLSession` owned by this transport,
 /// created WITHOUT a session-level delegate.
 ///
-/// CN-04 moves pinning (and progress) from a single delegate shared by every
-/// task on the session to `TaskDelegate`, a fresh instance per call: each
-/// transfer remembers for ITSELF whether it cancelled its own challenge
-/// because pinning rejected the certificate, so `URLError(.cancelled)` from a
-/// pinning failure can never be confused with the caller cancelling the
-/// `Task` (CN-01) — no shared state, no session-wide delegate to get that
-/// wrong.
+/// Pinning (and progress) live in `TaskDelegate`, a fresh instance per call,
+/// not a single delegate shared by every task on the session: each transfer
+/// remembers for ITSELF whether it cancelled its own challenge because
+/// pinning rejected the certificate, so `URLError(.cancelled)` from a pinning
+/// failure can never be confused with the caller cancelling the `Task` — no
+/// shared state, no session-wide delegate to get that wrong.
 public final class URLSessionTransport: HTTPTransport {
     private let session: URLSession
     private let pinning: SSLPinningConfiguration?

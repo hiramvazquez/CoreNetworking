@@ -20,8 +20,7 @@ public protocol HTTPTransport: Sendable {
     func send(_ request: URLRequest, progress: TransferProgress?) async throws -> (Data, HTTPURLResponse)
 
     /// Sends `request` and streams its body straight to `destination`
-    /// instead of holding it in memory — the fix for CN-07 (`download` used
-    /// to buffer the whole response as `Data`, byte by byte).
+    /// instead of holding it in memory, no matter how large the response is.
     ///
     /// - Parameters:
     ///   - destination: Where to move the downloaded file. Any existing file

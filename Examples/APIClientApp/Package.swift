@@ -22,7 +22,7 @@ let package = Package(
     ],
     dependencies: [
         // Solo en este monorepo: `path:` al paquete hermano. Un consumidor real usa:
-        //   .package(url: "https://github.com/hiram0816/spm-pro.git", from: "1.0.0"),
+        //   .package(url: "https://github.com/hiramvazquez/spm-pro.git", from: "1.0.0"),
         .package(path: "../..")
     ],
     targets: [

@@ -44,19 +44,18 @@ import CoreNetworking
 
 let configuration = NetworkingConfiguration(
     baseURL: URL(string: "https://api.miapp.com")!,
-    defaultHeaders: ["X-App-Version": "1.0"],
-    environment: "production"
+    defaultHeaders: ["X-App-Version": "1.0"]
 )
 
 let service = APIService(configuration: configuration)
 ```
 
-### El decoder es tuyo
+### Decoder, encoder y sesión son tuyos
 
 Cada backend tiene su convención de claves y de fechas, así que el `JSONDecoder`
-lo pones tú. Sin esto había que repetir `CodingKeys` en cada DTO —o decodificar
-las fechas a `String` y convertirlas a mano—, que es trabajo que una línea
-resuelve:
+(y su contraparte al enviar, el `JSONEncoder`) los pones tú. Sin esto había que
+repetir `CodingKeys` en cada DTO —o decodificar las fechas a `String` y
+convertirlas a mano—, que es trabajo que una línea resuelve:
 
 ```swift
 let configuration = NetworkingConfiguration(
@@ -66,17 +65,43 @@ let configuration = NetworkingConfiguration(
         d.keyDecodingStrategy = .convertFromSnakeCase
         d.dateDecodingStrategy = .iso8601
         return d
+    },
+    makeEncoder: {
+        let e = JSONEncoder()
+        e.keyEncodingStrategy = .convertToSnakeCase
+        e.dateEncodingStrategy = .iso8601
+        return e
     }
 )
 ```
 
-Es una **fábrica** y no un `JSONDecoder` a propósito: `JSONDecoder` es una clase
-mutable y no `Sendable`, así que compartir una instancia entre peticiones
-concurrentes sería una carrera de datos que el compilador no puede ver. Se crea
-uno por decode, que es lo que ya se hacía.
+Son **fábricas** y no un `JSONDecoder`/`JSONEncoder` compartidos — no porque
+`JSONDecoder`/`JSONEncoder` no sean `Sendable` (lo SON, en el SDK actual), sino
+porque son clases MUTABLES: reconfigurarlas desde dos peticiones concurrentes
+sería una carrera de datos real, aunque el compilador no la vea a través de
+`Sendable`. Una fábrica que construye una instancia fresca por decode/encode es
+aislamiento por construcción, más simple que sincronizar una instancia
+compartida.
 
-Si no pasas nada, el comportamiento es el de siempre: `JSONDecoder()` sin
-configurar, o sea claves literales y fechas como número.
+Si no pasas nada, el comportamiento es el de siempre: `JSONDecoder()`/
+`JSONEncoder()` sin configurar, o sea claves literales y fechas como número.
+
+La sesión también es tuya: `sessionConfiguration` es una fábrica de
+`URLSessionConfiguration` (`waitsForConnectivity`, cookies desactivadas, TLS
+1.2 mínimo por defecto — ver el doc comment del propio parámetro para el
+racional completo). Igual que con el decoder/encoder, si no pasas nada se usa
+el default del paquete.
+
+```swift
+let configuration = NetworkingConfiguration(
+    baseURL: URL(string: "https://api.miapp.com")!,
+    sessionConfiguration: {
+        let c = NetworkingConfiguration.defaultSessionConfiguration()
+        c.timeoutIntervalForResource = 120
+        return c
+    }
+)
+```
 
 `NetworkingConfiguration` es un struct inmutable `Sendable`. Una `baseURL` sin
 scheme/host es un error de programación y falla en construcción (precondición),
@@ -84,32 +109,48 @@ no en el primer request.
 
 ### 2. Requests tipados
 
+Un endpoint es un tipo completo: pide (`path`, `method`, `body`, `queryItems`)
+y declara lo que espera de vuelta (`Response`). Sin `Response` propio,
+`execute` devuelve `Empty` — no hace falta ningún `typealias` de relleno para
+un GET sin body ni respuesta que decodificar:
+
 ```swift
-struct GetGamesRequest: BaseRequest {
-    typealias Parameters = EmptyParameters
+struct GetGames: BaseRequest {
+    struct Response: Decodable, Sendable { let games: [Game] }
     let path = "/games"
-    let method: HTTPMethod = .GET
+    let method = HTTPMethod.get
 }
 
-struct CreateGameRequest: BaseRequest {
-    struct Body: RequestParameters {
-        let title: String
-    }
+struct CreateGame: BaseRequest {
+    struct Body: Encodable, Sendable { let title: String }
+    struct Response: Decodable, Sendable { let id: String }
+
     let path = "/games"
-    let method: HTTPMethod = .POST
-    let parameters: Body?
+    let method = HTTPMethod.post
+    let body: Body?
+
+    init(title: String) { self.body = Body(title: title) }
+}
+
+struct DeleteGame: BaseRequest {
+    // Sin Body ni Response: DELETE sin cuerpo, `execute` devuelve `Empty`.
+    let path: String
+    let method = HTTPMethod.delete
+    init(id: String) { self.path = "/games/\(id)" }
 }
 ```
 
-Opciones por request (con defaults): `headers` (pisan a los de la config),
-`queryItems`, `timeoutInterval` (30 s) y `allowsNonIdempotentRetry` (false —
-opt-in para reintentar POST/PATCH).
+Opciones por request (con defaults): `headers` (pisan a los de la config y al
+`Accept`/`Content-Type` del paquete), `queryItems` (`[]`), `timeout` (`Duration`,
+30 s) y `allowsNonIdempotentRetry` (`false` — opt-in para reintentar POST/PATCH).
+`Content-Type: application/json` solo se envía cuando el request declara `body`;
+`Accept: application/json` siempre, salvo que `headers` lo sobrescriba.
 
 ### 3. Ejecutar
 
 ```swift
 do {
-    let games: [Game] = try await service.execute(request: GetGamesRequest())
+    let games = try await service.execute(GetGames()).games
 } catch {
     // typed throws: `error` ya es APIError
     switch error.category {
@@ -118,6 +159,15 @@ do {
     default: show(error.localizedDescription)
     }
 }
+```
+
+El tipo de retorno es `GetGames.Response`, no algo que haya que anotar en el
+call site: lo declara el propio request. Para el caso puntual en que hace falta
+decodificar algo distinto de lo que el request declara, existe la sobrecarga
+`execute(_:as:)`:
+
+```swift
+let raw = try await service.execute(GetGames(), as: RawGamesEnvelope.self)
 ```
 
 Ver la sección [Errores](#errores) para el detalle de `code`, `category` y
@@ -152,7 +202,7 @@ en el mismo caso.
 
 ```swift
 do {
-    let games: [Game] = try await service.execute(request: GetGamesRequest())
+    let games = try await service.execute(GetGames()).games
 } catch {
     switch error.category {
     case .offline:          showOfflineBanner()
@@ -409,7 +459,7 @@ Sources/CoreNetworking/
 ├── SSLPinningConfiguration.swift   # 3 estados + SPKIHasher
 ├── RetryPolicy.swift               # Backoff + jitter
 ├── APIError.swift                  # Error tipado + mapeo + Retry-After
-├── BaseRequest.swift / BaseResponse.swift
+├── BaseRequest.swift               # BaseRequest, HTTPMethod, Empty
 ├── RequestInterceptor.swift        # Protocolo + LoggingInterceptor
 ├── Logging.swift                   # os.Logger + redacción
 └── Configuration/NetworkingConfiguration.swift

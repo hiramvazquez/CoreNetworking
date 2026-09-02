@@ -623,7 +623,7 @@ let service = APIService(
     clock: ManualClock()   // sin dormir de verdad — ver más abajo
 )
 
-let games: [Game] = try await service.execute(request: GetGamesRequest())
+let games: [Game] = try await service.execute(GetGamesRequest())
 await transport.recorded.count   // 3
 ```
 
@@ -645,7 +645,7 @@ es ese reloj en tests: nadie espera tiempo real, y `advance(by:)` dispara los
 ```swift
 let clock = ManualClock()
 let task = Task { () async throws(APIError) -> Payload in
-    try await service.execute(request: GetGamesRequest())
+    try await service.execute(GetGamesRequest())
 }
 await clock.waitUntilSleeping()   // el pipeline llegó al backoff — sin sondear, sin dormir
 clock.advance(by: .seconds(10))   // dispara el siguiente intento
@@ -734,3 +734,7 @@ Sources/CoreNetworking/
 
 Sources/CoreNetworkingTestSupport/  # InMemoryTransport, MockURLProtocol, MockAPIHelper, MockAPIService, ManualClock
 ```
+
+## Licencia
+
+MIT — ver [LICENSE](../LICENSE) en la raíz del repositorio.

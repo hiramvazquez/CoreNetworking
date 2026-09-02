@@ -94,7 +94,7 @@ public struct APIError: Error, Sendable {
         }
 
         init(_ urlRequest: URLRequest) {
-            self.method = urlRequest.httpMethod.flatMap(HTTPMethod.init(rawValue:)) ?? .GET
+            self.method = urlRequest.httpMethod.flatMap(HTTPMethod.init(rawValue:)) ?? .get
             self.url = urlRequest.url
         }
     }

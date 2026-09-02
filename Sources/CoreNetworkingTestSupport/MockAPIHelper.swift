@@ -9,7 +9,7 @@ public enum MockAPIHelper {
     /// Registers a mock response for `method` + `url`.
     public static func setupMock(
         for url: URL,
-        method: HTTPMethod = .GET,
+        method: HTTPMethod = .get,
         statusCode: Int = 200,
         data: Data? = nil,
         headers: [String: String] = [:]
@@ -26,7 +26,7 @@ public enum MockAPIHelper {
     /// Registers a mock JSON response for `method` + `url`.
     public static func setupMockJSON(
         for url: URL,
-        method: HTTPMethod = .GET,
+        method: HTTPMethod = .get,
         json: String,
         statusCode: Int = 200
     ) {
@@ -36,7 +36,7 @@ public enum MockAPIHelper {
     /// Registers a transport-level error (e.g. timeout) for `method` + `url`.
     public static func setupMockError(
         for url: URL,
-        method: HTTPMethod = .GET,
+        method: HTTPMethod = .get,
         error: URLError
     ) {
         MockURLProtocol.register(

@@ -32,9 +32,16 @@ public final class MockAPIService: APIServiceProtocol, @unchecked Sendable {
         set { state.withLockUnchecked { $0.error = newValue } }
     }
 
-    public func execute<Request: BaseRequest, Response: Decodable>(
-        request: Request
-    ) async throws(APIError) -> Response {
+    public func execute<Request: BaseRequest>(
+        _ request: Request
+    ) async throws(APIError) -> Request.Response {
+        try stubbedValue()
+    }
+
+    public func execute<Request: BaseRequest, Value: Decodable & Sendable>(
+        _ request: Request,
+        as type: Value.Type
+    ) async throws(APIError) -> Value {
         try stubbedValue()
     }
 

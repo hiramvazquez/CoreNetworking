@@ -32,7 +32,7 @@ public struct MockNetworkExchange: Sendable {
     public let latency: Duration?
 
     public init(
-        method: HTTPMethod = .GET,
+        method: HTTPMethod = .get,
         url: URL,
         response: MockResponse,
         error: URLError? = nil,

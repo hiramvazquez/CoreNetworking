@@ -64,11 +64,29 @@ public final class MockAPIService: APIServiceProtocol, @unchecked Sendable {
         try stubbedValue(for: Request.self)
     }
 
-    public func download<Request: BaseRequest>(
-        request: Request,
+    public func data<Request: BaseRequest>(
+        for request: Request,
         progress: (@Sendable (Double) -> Void)?
     ) async throws(APIError) -> Data {
         try stubbedValue(for: Request.self)
+    }
+
+    /// `download` returns `Void` (the content lives at `destination`, not in
+    /// the return value), so it does not go through `stubbedValue`: register
+    /// `stub(_:throwing:)` to simulate a failed download; with no stub
+    /// registered, or one registered with `stub(_:returning:)`, it succeeds
+    /// without writing anything to `destination` — a consumer test that
+    /// needs real file content should use `APIService` with
+    /// `InMemoryTransport`/`URLSessionTransport` instead of this mock.
+    public func download<Request: BaseRequest>(
+        _ request: Request,
+        to destination: URL,
+        progress: (@Sendable (Double) -> Void)?
+    ) async throws(APIError) {
+        let stub = state.withLockUnchecked { $0[ObjectIdentifier(Request.self)] }
+        if let error = stub?.error {
+            throw error
+        }
     }
 
     private func stubbedValue<Request: BaseRequest, Value>(for requestType: Request.Type) throws(APIError) -> Value {

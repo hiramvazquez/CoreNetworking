@@ -51,6 +51,16 @@ public actor InMemoryTransport: HTTPTransport {
     public enum Outcome: Sendable {
         case response(status: Int, headers: [String: String] = [:], body: Data = Data(), latency: Duration? = nil)
         case failure(any Error)
+
+        /// Convenience: simulates exactly what `URLSessionTransport` throws
+        /// when its per-task `TaskDelegate` cancelled a server-trust
+        /// challenge because pinning rejected the certificate —
+        /// `URLError(.cancelled)` with `pinningFailed == true`, translated to
+        /// `PinningFailure`. Lets a unit test exercise `APIService`'s
+        /// `.untrustedServer` mapping without a real TLS handshake.
+        public static func pinningFailure(host: String) -> Outcome {
+            .failure(PinningFailure(host: host))
+        }
     }
 
     private struct MatchKey: Hashable {
@@ -110,5 +120,15 @@ public actor InMemoryTransport: HTTPTransport {
             progress?.onDownload?(1.0)
             return (body, response)
         }
+    }
+
+    /// Same matching/sequencing as `send`, but writes the body to
+    /// `destination` instead of returning it — every outcome (including
+    /// `.pinningFailure`, latency and response sequences) behaves exactly
+    /// the same for `download` as for `send`.
+    public func download(_ request: URLRequest, to destination: URL, progress: TransferProgress?) async throws -> HTTPURLResponse {
+        let (data, response) = try await send(request, progress: progress)
+        try data.write(to: destination, options: .atomic)
+        return response
     }
 }

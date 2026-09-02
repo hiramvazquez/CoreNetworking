@@ -11,7 +11,32 @@ Pide (`path`, `method`, `body`, `queryItems`) y declara lo que espera de vuelta
 (`Response`). Sin `Response` propio, `execute` devuelve ``Empty`` — no hace falta ningún
 `typealias` de relleno para un GET sin body ni respuesta que decodificar.
 
-@Snippet(path: "CoreNetworking/Snippets/requests-body-and-delete")
+<!-- snippet: requests-body-and-delete -->
+```swift
+import CoreNetworking
+
+struct CreateGame: BaseRequest {
+    struct Body: Encodable, Sendable { let title: String }
+    struct Response: Decodable, Sendable { let id: String }
+
+    let path = "/games"
+    let method = HTTPMethod.post
+    let body: Body?
+
+    init(title: String) { self.body = Body(title: title) }
+}
+
+struct DeleteGame: BaseRequest {
+    let path: String
+    let method = HTTPMethod.delete
+    init(id: String) { self.path = "/games/\(id)" }
+}
+
+func createAndDelete(service: any APIServiceProtocol) async throws(APIError) {
+    let created = try await service.execute(CreateGame(title: "Chess"))
+    _ = try await service.execute(DeleteGame(id: created.id))
+}
+```
 
 Opciones por request, todas con default: `headers` (pisan a los de la configuración y al
 `Accept`/`Content-Type` del paquete), `queryItems` (`[]`), `timeout` (`Duration`, 30 s) y
@@ -26,7 +51,38 @@ conveniencia construye un `URLSessionTransport` por debajo, usando la fábrica
 `sessionConfiguration` de `configuration`. El `init(configuration:transport:...)` designado
 es el punto de inyección real — ver <doc:Transport>.
 
-@Snippet(path: "CoreNetworking/Snippets/quickstart-service")
+<!-- snippet: quickstart-service -->
+```swift
+import CoreNetworking
+import Foundation
+
+struct GetGames: BaseRequest {
+    struct Response: Decodable, Sendable { let games: [String] }
+    let path = "/games"
+    let method = HTTPMethod.get
+}
+
+let configuration = NetworkingConfiguration(
+    baseURL: URL(string: "https://api.miapp.com")!,
+    defaultHeaders: ["X-App-Version": "1.0"]
+)
+let service = APIService(configuration: configuration)
+
+func fetchGames() async {
+    do {
+        let games = try await service.execute(GetGames()).games
+        print(games)
+    } catch {
+        switch error.category {
+        case .offline: print("sin conexión")
+        case .unauthorized: print("relanzar login")
+        default: print(error.localizedDescription)
+        }
+    }
+}
+
+await fetchGames()
+```
 
 Para el caso puntual en que hace falta decodificar algo distinto de lo que el request
 declara, existe la sobrecarga `execute(_:as:)`.

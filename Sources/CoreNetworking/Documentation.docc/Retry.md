@@ -4,7 +4,24 @@
 
 ## Overview
 
-@Snippet(path: "CoreNetworking/Snippets/retry-policy")
+<!-- snippet: retry-policy -->
+```swift
+import CoreNetworking
+import Foundation
+
+let configuration = NetworkingConfiguration(baseURL: URL(string: "https://api.miapp.com")!)
+
+let policy = RetryPolicy(
+    maxAttempts: 3,
+    initialDelay: .milliseconds(500),
+    shouldRetry: { error, _ in
+        // No reintentar nunca un error propio del interceptor.
+        error.isRetryable && error.code != .interceptor
+    }
+)
+
+let service = APIService(configuration: configuration, retryPolicy: policy)
+```
 
 - `maxAttempts` cuenta requests TOTALES (3 ⇒ como mucho 3 requests); `.noRetry` = 1.
 - Solo métodos idempotentes reintentan por defecto; POST/PATCH requieren

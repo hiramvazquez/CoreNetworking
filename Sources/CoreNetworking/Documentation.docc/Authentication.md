@@ -19,7 +19,31 @@ public struct TokenRefreshRetrier: RequestRetrier {
 }
 ```
 
-@Snippet(path: "CoreNetworking/Snippets/auth-token-refresh")
+<!-- snippet: auth-token-refresh -->
+```swift
+import CoreNetworking
+import Foundation
+
+actor TokenStore {
+    private(set) var token: String?
+    func save(_ token: String) { self.token = token }
+    func current() -> String? { token }
+}
+
+let tokenStore = TokenStore()
+
+let refresher = TokenRefresher {
+    // let newToken = try await authClient.refresh()
+    await tokenStore.save("nuevo-token")
+}
+
+let configuration = NetworkingConfiguration(baseURL: URL(string: "https://api.miapp.com")!)
+let service = APIService(
+    configuration: configuration,
+    interceptors: [BearerTokenInterceptor { await tokenStore.current() }],
+    retriers: [TokenRefreshRetrier(refresher: refresher)]
+)
+```
 
 `BearerTokenInterceptor` añade `Authorization: Bearer <token>` leyendo el token FRESCO en
 cada `willSend` — incluido el que dispara `TokenRefreshRetrier` tras un refresh.

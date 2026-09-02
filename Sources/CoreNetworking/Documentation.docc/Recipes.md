@@ -8,7 +8,33 @@ Descarga con progreso, rotación de pin y logout global — de principio a fin.
 (interceptores, retry, mapeo de errores) y limpia `destination` en cualquier camino de
 error:
 
-@Snippet(path: "CoreNetworking/Snippets/transport-upload-download")
+<!-- snippet: transport-upload-download -->
+```swift
+import CoreNetworking
+import Foundation
+
+struct UploadAvatar: BaseRequest {
+    struct Response: Decodable, Sendable { let url: String }
+    let path = "/avatar"
+    let method = HTTPMethod.post
+}
+
+struct DownloadReport: BaseRequest {
+    let path = "/reports/latest.pdf"
+    let method = HTTPMethod.get
+}
+
+func uploadAndDownload(service: any APIServiceProtocol, avatarData: Data, destination: URL) async throws(APIError) {
+    let uploaded = try await service.upload(UploadAvatar(), data: avatarData) { fraction in
+        print("subida: \(fraction)")
+    }
+    print(uploaded.url)
+
+    try await service.download(DownloadReport(), to: destination) { fraction in
+        print("descarga: \(fraction)")
+    }
+}
+```
 
 ## Rotación de pin
 
@@ -32,7 +58,54 @@ Cuando `TokenRefreshRetrier` falla (el refresh en sí devuelve un error), invali
 sesión local y notifica a la app — sin requests extra, porque `TokenRefreshRetrier` nunca
 reintenta un 401 más allá del primer intento (ver <doc:Authentication>):
 
-@Snippet(path: "CoreNetworking/Snippets/recipe-logout-401")
+<!-- snippet: recipe-logout-401 -->
+```swift
+import CoreNetworking
+import Foundation
+
+protocol SessionExpiring: Sendable {
+    func sessionDidExpire() async
+}
+
+actor SessionStore {
+    private(set) var token: String?
+    private let onExpire: any SessionExpiring
+
+    init(onExpire: any SessionExpiring) {
+        self.onExpire = onExpire
+    }
+
+    func current() -> String? { token }
+    func save(_ token: String) { self.token = token }
+
+    func invalidate() async {
+        token = nil
+        await onExpire.sessionDidExpire()
+    }
+}
+
+func makeAuthenticatedService(
+    baseURL: URL,
+    sessionStore: SessionStore,
+    authClient: @escaping @Sendable () async throws -> String
+) -> APIService {
+    let refresher = TokenRefresher {
+        do {
+            let newToken = try await authClient()
+            await sessionStore.save(newToken)
+        } catch {
+            await sessionStore.invalidate()
+            throw error
+        }
+    }
+
+    return APIService(
+        configuration: NetworkingConfiguration(baseURL: baseURL),
+        interceptors: [BearerTokenInterceptor { await sessionStore.current() }],
+        retriers: [TokenRefreshRetrier(refresher: refresher)]
+    )
+}
+```
 
 La app observa `SessionExpiring` (un protocolo propio, no de este paquete — el mismo
 patrón que un `*Storing`) desde su vista raíz y navega a login cuando la sesión expira; ver

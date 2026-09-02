@@ -26,7 +26,33 @@ través de las tres llamadas de un intento; un reintento crea uno nuevo (`attemp
 incrementado, `id` distinto) — así se correlacionan logs sin confundir requests
 concurrentes a la misma URL.
 
-@Snippet(path: "CoreNetworking/Snippets/interceptors-logging")
+<!-- snippet: interceptors-logging -->
+```swift
+import CoreNetworking
+import Foundation
+
+struct RequestIDInterceptor: RequestInterceptor {
+    func willSend(_ request: URLRequest, context: RequestContext) async throws(APIError) -> URLRequest {
+        var request = request
+        request.setValue(context.id.uuidString, forHTTPHeaderField: "X-Request-ID")
+        return request
+    }
+
+    func didReceive(_ response: HTTPURLResponse, data: Data, context: RequestContext) async {
+        // métrica: duración = ContinuousClock.now - context.startedAt
+    }
+
+    func didFail(_ error: APIError, context: RequestContext) async {
+        // métrica de fallo, correlacionada por context.id
+    }
+}
+
+let configuration = NetworkingConfiguration(baseURL: URL(string: "https://api.miapp.com")!)
+let service = APIService(
+    configuration: configuration,
+    interceptors: [RequestIDInterceptor(), LoggingInterceptor()]
+)
+```
 
 `willSend` puede **abortar** el request lanzando: el transporte nunca llega a verlo,
 `APIService` envuelve lo lanzado en `APIError(code: .interceptor, underlying:)`, llama a

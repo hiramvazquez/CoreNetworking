@@ -71,3 +71,5 @@ Ver también: `AppFoundation/AGENTS.md` (capas View/ViewModel/Logic),
 `Examples/APIClientApp` (un consumidor mínimo, sin AppFoundation) y
 `Sources/CoreNetworking/Documentation.docc/` (Xcode: **Product ▸ Build Documentation**)
 para la referencia completa por pieza, con ejemplos que compilan (`Snippets/`).
+
+Los ejemplos de DocC están sincronizados con `Snippets/` por CI (`Scripts/check-doc-snippets.sh`, job `docs`).

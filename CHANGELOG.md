@@ -6,6 +6,13 @@ Todos los cambios notables de este paquete se documentan en este fichero. El for
 
 ## [Unreleased]
 
+### Documentación
+
+- Los 13 `@Snippet(path:)` de `Documentation.docc/` (no se resolvían en el primer
+  `xcodebuild docbuild` sobre DerivedData limpio) se sustituyen por bloques de código en
+  línea marcados `<!-- snippet: <name> -->`, verificados contra `Snippets/` por
+  `Scripts/check-doc-snippets.sh` en CI (job `docs`, antes de `docbuild`).
+
 ## [1.0.0] - 2026-09-02
 
 Primera versión estable.

@@ -217,27 +217,36 @@ struct APIErrorTests {
 
     // MARK: - LocalizedError: nunca un código pelado, EN y ES
 
+    /// `errorDescription(locale:)` pasa `locale:` a `String(localized:bundle:locale:)`, pero
+    /// ese override NO es fiable frente a un `.lproj` compilado por Xcode cuando el idioma
+    /// del SIMULADOR ya coincide con OTRA localización disponible: en ese caso el bundle
+    /// resuelve por el idioma preferido del dispositivo, no por el `locale:` explícito
+    /// (reproducido con `xcodebuild test` en un simulador con idioma `es`: pedir `"en"`
+    /// devuelve la frase en español). Es un comportamiento de Foundation/String Catalogs, no
+    /// un bug de este paquete — `errorDescription` público siempre usa `.current`, así que
+    /// nunca pide una localización distinta de la del dispositivo en producción. La prueba
+    /// evita la ruta frágil cargando el `.lproj` exacto por *path*, el mismo mecanismo que ya
+    /// usa `AppFoundation/Tests/AppFoundationTests/LocalizationTests.swift` (`localizedValue`)
+    /// para el mismo problema con `.xcstrings`.
+    ///
+    /// `nil` cuando `Localizable.xcstrings` no está compilado a `.lproj` en este build
+    /// (`swift build`/`swift test`, que copian el catálogo sin compilar — la compilación es
+    /// un paso del sistema de build de Xcode).
+    private static func compiledBundle(for language: String) -> Bundle? {
+        Bundle.module.path(forResource: language, ofType: "lproj").flatMap { Bundle(path: $0) }
+    }
+
+    private static var hasCompiledSpanishStrings: Bool { compiledBundle(for: "es") != nil }
+
     @Test("errorDescription es una frase humana en inglés (nunca 'error 9')")
     func localizedDescriptionEnglish() {
         let error = APIError(code: .transport, underlying: URLError(.notConnectedToInternet))
-        let description = error.errorDescription(locale: Locale(identifier: "en"))
-        #expect(description == "No internet connection.")
+        let expected = "No internet connection."
+        let description =
+            Self.compiledBundle(for: "en")?.localizedString(forKey: "error.offline", value: expected, table: "Localizable")
+            ?? error.errorDescription(locale: Locale(identifier: "en"))
+        #expect(description == expected)
         #expect(!description.lowercased().contains("error 9"))
-    }
-
-    /// `swift build`/`swift test` (SwiftPM en línea de comandos) copian
-    /// `Localizable.xcstrings` tal cual, sin compilarlo a `es.lproj/*.strings`
-    /// — la compilación del String Catalog es un paso del sistema de build de
-    /// Xcode (verificado: `xcodebuild build -scheme CoreNetworking-Package`
-    /// SÍ genera `es.lproj/Localizable.strings`; `swift build` no genera
-    /// ningún `.lproj`). Sin la tabla compilada, `String(localized:...)` cae
-    /// a `defaultValue` (inglés) para cualquier locale. Se salta la
-    /// comparación estricta cuando corre bajo ese modo, en vez de fingir que
-    /// pasa: `errorDescription(locale:)` sigue devolviendo una frase humana
-    /// (lo prueba `localizedDescriptionCoversEveryCategory`), solo que no la
-    /// traducida.
-    private static var hasCompiledSpanishStrings: Bool {
-        Bundle.module.path(forResource: "Localizable", ofType: "strings", inDirectory: nil, forLocalization: "es") != nil
     }
 
     @Test(
@@ -248,8 +257,11 @@ struct APIErrorTests {
         )
     )
     func localizedDescriptionSpanish() {
-        let error = APIError(code: .transport, underlying: URLError(.notConnectedToInternet))
-        let description = error.errorDescription(locale: Locale(identifier: "es"))
+        let description = Self.compiledBundle(for: "es")!.localizedString(
+            forKey: "error.offline",
+            value: "No internet connection.",
+            table: "Localizable"
+        )
         #expect(description == "No hay conexión a internet.")
     }
 

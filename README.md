@@ -740,10 +740,20 @@ Nada de esto viaja en el binario de producción: es un producto aparte.
 
 ## Arquitectura
 
+En la arquitectura View → ViewModel → Logic → Services/Stores (AppFoundation), este
+paquete lo toca un único `Service` por `EndpointService`/`api.execute`: reglas, naming y
+cómo testear un `Service` están en [`AGENTS.md`](AGENTS.md); el ejemplo de referencia
+(`LoginApp`, la variante "solo API") vive en
+[`AppFoundation/Examples/LoginApp`](../AppFoundation/Examples/LoginApp). El rediseño
+completo de este README (DocC, Snippets) es alcance de PRD-X-03.
+
+Ficheros del propio paquete:
+
 ```
 Sources/CoreNetworking/
 ├── APIServiceProtocol.swift        # Contrato público (typed throws)
 ├── APIService.swift                # Pipeline: build → interceptores → transporte → status
+├── EndpointService.swift           # Plantilla de Service: `var api` + `call(_:)` gratis
 ├── Transport/
 │   ├── HTTPTransport.swift         # Protocolo `send`/`download` — el punto de inyección
 │   ├── URLSessionTransport.swift   # Implementación de producción (una URLSession, sin delegate propio)

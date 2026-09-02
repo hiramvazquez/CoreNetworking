@@ -51,6 +51,26 @@ let configuration = NetworkingConfiguration(
 let service = APIService(configuration: configuration)
 ```
 
+`APIService` no crea ninguna `URLSession`: el `init` de arriba es azúcar que
+construye un `URLSessionTransport` por debajo. Si necesitas configurar la
+sesión (timeouts, `waitsForConnectivity`, caché…) o pinning, pasa el
+transporte tú mismo — es el punto de inyección real:
+
+```swift
+let transport = URLSessionTransport(
+    configuration: {
+        let c = URLSessionConfiguration.default
+        c.waitsForConnectivity = true
+        return c
+    }(),
+    pinning: pinning   // opcional, ver SSL Pinning
+)
+let service = APIService(configuration: configuration, transport: transport)
+```
+
+En tests, el transporte es lo que cambias para no tocar la red — ver
+[Testing](#testing).
+
 ### El decoder es tuyo
 
 Cada backend tiene su convención de claves y de fechas, así que el `JSONDecoder`
@@ -210,7 +230,7 @@ let error = APIError.stub(code: .httpStatus, statusCode: 422, body: bodyData)
 ```swift
 let service = APIService(
     configuration: configuration,
-    retryPolicy: RetryPolicy(maxAttempts: 3, initialDelay: 0.5)
+    retryPolicy: RetryPolicy(maxAttempts: 3, initialDelay: .milliseconds(500))
 )
 ```
 
@@ -221,8 +241,10 @@ let service = APIService(
   transporte (`timedOut`, `networkConnectionLost`, `cannotConnectToHost`,
   `dnsLookupFailed`, `cannotFindHost` — **no** `notConnectedToInternet`: sin
   red no hay nada que reintentar en medio segundo) y HTTP 5xx / 408 / 429.
-- Backoff exponencial con equal jitter; un `Retry-After` del servidor
-  (segundos u HTTP-date) manda sobre el backoff.
+- Backoff exponencial con equal jitter, en `Duration` (no `TimeInterval`):
+  `initialDelay: Duration = .milliseconds(500)`, `maxDelay: Duration = .seconds(16)`.
+  Un `Retry-After` del servidor (segundos u HTTP-date, también `Duration`)
+  manda sobre el backoff.
 - El criterio es un predicado inyectable y tipado:
   ```swift
   public let shouldRetry: @Sendable (APIError, Int) -> Bool
@@ -235,6 +257,11 @@ let service = APIService(
   RetryPolicy(shouldRetry: { error, _ in error.isRetryable && error.code != .interceptor })
   ```
   `RetryPolicy` no es `Equatable` a propósito: `shouldRetry` es un closure.
+- El sleep entre reintentos pasa por un `any Clock<Duration>` inyectado en
+  `APIService.init(clock:)` — `ContinuousClock()` por defecto, nunca
+  `Task.sleep` directo. En tests, inyecta `ManualClock`
+  (`CoreNetworkingTestSupport`) y controla el paso del tiempo a mano: cero
+  esperas reales, cero flakiness por carga de CI. Ver [Testing](#testing).
 
 ## SSL Pinning
 
@@ -357,14 +384,82 @@ para des-redactar. Bodies solo en DEBUG y con opt-in.
 
 ## Testing
 
+### `InMemoryTransport` (camino principal)
+
+Sin `URLSession`, sin `URLProtocol`, sin registro estático global: cada
+`InMemoryTransport` es una instancia nueva que posee el test, así que no hay
+contaminación entre tests corriendo en paralelo ni disciplina de "un host por
+test" que recordar. Es un `actor` (el estado se comparte de verdad entre el
+test y el pipeline), y soporta SECUENCIAS de respuestas — 500 → 500 → 200 —
+para probar "reintento que acaba bien", algo que `MockURLProtocol` no puede
+hacer.
+
 ```swift
 import CoreNetworking
 import CoreNetworkingTestSupport
 
-// Mock determinista a nivel URLProtocol:
+let transport = InMemoryTransport()
+await transport.register(InMemoryTransport.Exchange(
+    url: URL(string: "https://unit.test/games")!,
+    responses: [
+        .response(status: 500),
+        .response(status: 500),
+        .response(status: 200, body: gamesJSON)
+    ]
+))
+
+let service = APIService(
+    configuration: NetworkingConfiguration(baseURL: URL(string: "https://unit.test")!),
+    transport: transport,
+    retryPolicy: RetryPolicy(maxAttempts: 3, initialDelay: .milliseconds(1)),
+    clock: ManualClock()   // sin dormir de verdad — ver más abajo
+)
+
+let games: [Game] = try await service.execute(request: GetGamesRequest())
+await transport.recorded.count   // 3
+```
+
+- `Exchange.responses` se consume en orden; el último elemento se repite (un
+  único elemento se comporta como un mock reutilizable de siempre).
+- `transport.recorded`: cada `URLRequest` que pasó por el transporte, con
+  `httpBody` legible directamente (nunca un stream — no hay `URLSession` de
+  por medio).
+- `Outcome.failure(_ error: any Error)` simula un fallo de transporte (p. ej.
+  `URLError(.timedOut)`) sin necesidad de un `URLProtocol`.
+
+### `ManualClock`: retry sin esperar de verdad
+
+`APIService.performWithRetry` duerme a través de un `any Clock<Duration>`
+inyectado (`ContinuousClock()` por defecto). `ManualClock` (misma librería)
+es ese reloj en tests: nadie espera tiempo real, y `advance(by:)` dispara los
+`sleep` pendientes a mano.
+
+```swift
+let clock = ManualClock()
+let task = Task { () async throws(APIError) -> Payload in
+    try await service.execute(request: GetGamesRequest())
+}
+await clock.waitUntilSleeping()   // el pipeline llegó al backoff — sin sondear, sin dormir
+clock.advance(by: .seconds(10))   // dispara el siguiente intento
+let result = try await task.value
+```
+
+`waitUntilSleeping()` no sondea ni duerme: es una `withCheckedContinuation`
+que se resuelve en el instante en que el pipeline registra el `sleep`. Es la
+pieza que hace posible que `RetryBehaviorTests` no mida tiempo de pared ni
+tenga un solo `Task.sleep` real, y que `swift test --parallel` sea
+determinista bajo cualquier carga de CI.
+
+### `MockURLProtocol` (integración)
+
+Para el puñado de tests que necesitan atravesar el URL loading system de
+verdad — merge de headers, cookies, redirecciones, el delegate de pinning —
+`MockURLProtocol` sigue disponible, ahora también con secuencias:
+
+```swift
 MockURLProtocol.register(MockNetworkExchange(
     url: URL(string: "https://unit.test/games")!,
-    response: MockResponse(statusCode: 200, data: gamesJSON)
+    responses: [MockResponse(statusCode: 500), MockResponse(statusCode: 200, data: gamesJSON)]
 ))
 
 let configuration = NetworkingConfiguration(
@@ -374,9 +469,9 @@ let configuration = NetworkingConfiguration(
 let service = APIService(configuration: configuration)
 ```
 
-- Registro síncrono, matching por método+URL, respuestas reutilizables,
-  `recordedRequests` para asertar conteos/headers, `latency` opcional para
-  probar cancelación.
+- Registro síncrono, matching por método+URL, `responses` consumidas en
+  orden (la última se repite), `recordedRequests` para asertar
+  conteos/headers, `latency` opcional para probar cancelación.
 - **Aísla por URL, no con `removeAll()`.** El registro es estático y compartido,
   y Swift Testing paraleliza las suites por defecto: un `removeAll()` en tu test
   borra los mocks de las suites que corren a la vez y las deja en rojo por algo
@@ -385,9 +480,21 @@ let service = APIService(configuration: configuration)
   test** (`https://mi-caso.test`), que es lo que de verdad aísla porque el
   matching es por URL exacta. `removeAll()` sigue existiendo para el caso en que
   controlas toda la ejecución, p. ej. bajo `@Suite(.serialized)`.
-- `MockAPIService` es un stub de `APIServiceProtocol` para tests de
-  consumidores (configura `result` o `error`).
-- Nada de esto viaja en el binario de producción: es un producto aparte.
+
+### `MockAPIService`
+
+Stub de `APIServiceProtocol` para tests de CONSUMIDORES del paquete (no de
+`APIService` en sí). Los stubs se registran por TIPO de request, no por orden
+de llamada — un `stub` para `GetGamesRequest` nunca se confunde con uno para
+`DeleteGameRequest`, ni con un `Response` del tipo equivocado:
+
+```swift
+let mock = MockAPIService()
+mock.stub(GetGamesRequest.self, returning: [Game(id: 1)])
+mock.stub(DeleteGameRequest.self, throwing: .stub(code: .httpStatus, statusCode: 404))
+```
+
+Nada de esto viaja en el binario de producción: es un producto aparte.
 
 > **Ojo al scheme si tienes CI.** Al existir dos productos, SPM ya no genera un scheme
 > `CoreNetworking` con acción de test: el agregado es **`CoreNetworking-Package`**.

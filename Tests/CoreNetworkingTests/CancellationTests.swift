@@ -83,14 +83,28 @@ struct CancellationTests {
         }
     }
 
-    @Test("download se cancela de verdad")
-    func downloadCancels() async throws {
-        let (service, baseURL) = try makeService(host: "cancel-download.test")
+    @Test("data(for:) se cancela de verdad")
+    func dataCancels() async throws {
+        let (service, baseURL) = try makeService(host: "cancel-data.test")
         registerSlowMock(url: baseURL.appendingPathComponent("/slow"))
 
         await expectCancelledFast {
-            _ = try await service.download(request: SlowRequest(), progress: nil)
+            _ = try await service.data(for: SlowRequest(), progress: nil)
         }
+    }
+
+    @Test("download(to:) se cancela de verdad, sin fichero huérfano en destination")
+    func downloadToDiskCancels() async throws {
+        let (service, baseURL) = try makeService(host: "cancel-download-disk.test")
+        registerSlowMock(url: baseURL.appendingPathComponent("/slow"))
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cn04-cancel-download-\(UUID().uuidString).bin")
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        await expectCancelledFast {
+            try await service.download(SlowRequest(), to: destination, progress: nil)
+        }
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
     }
 
     @Test("cancelar durante el backoff del retry → .cancelled sin segundo request")

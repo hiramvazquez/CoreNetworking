@@ -11,8 +11,11 @@ import Foundation
 public protocol HTTPTransport: Sendable {
     /// Sends `request` and returns its body and HTTP response.
     ///
-    /// - Parameter progress: Optional upload/download progress callbacks.
-    ///   `nil` when the caller does not care.
+    /// - Parameters:
+    ///   - request: The request to send, already fully formed (method,
+    ///     headers, body).
+    ///   - progress: Optional upload/download progress callbacks.
+    ///     `nil` when the caller does not care.
     /// - Throws: Whatever the underlying transport produces — a `URLError`,
     ///   a `CancellationError`, `PinningFailure`, or any other `Error`. This
     ///   protocol makes no promises about the error type: `APIService` is
@@ -23,6 +26,8 @@ public protocol HTTPTransport: Sendable {
     /// instead of holding it in memory, no matter how large the response is.
     ///
     /// - Parameters:
+    ///   - request: The request to send, already fully formed (method,
+    ///     headers, body).
     ///   - destination: Where to move the downloaded file. Any existing file
     ///     at this URL is replaced. The implementation is responsible for
     ///     leaving no orphaned temporary file behind, on success OR failure.

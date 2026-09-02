@@ -71,5 +71,8 @@ opción para des-redactar. Bodies solo en `DEBUG` y con opt-in.
 
 ## Ver también
 
-- <doc:Authentication> — el interceptor más usado: bearer token + refresh.
-- <doc:Retry> — `RequestRetrier`, la otra mitad del pipeline de fallo.
+El interceptor más usado es `BearerTokenInterceptor` (bearer token + refresh); la otra
+mitad del pipeline de fallo es `RequestRetrier`.
+
+- <doc:Authentication>
+- <doc:Retry>

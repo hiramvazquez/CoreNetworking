@@ -23,7 +23,7 @@ paquete lo toca un único `Service` por `EndpointService`/`api.execute` — ver 
 
 - <doc:GettingStarted>
 
-### Requests
+### Peticiones
 
 - <doc:Requests>
 
@@ -31,7 +31,7 @@ paquete lo toca un único `Service` por `EndpointService`/`api.execute` — ver 
 
 - <doc:ErrorHandling>
 
-### Retry
+### Reintentos
 
 - <doc:Retry>
 

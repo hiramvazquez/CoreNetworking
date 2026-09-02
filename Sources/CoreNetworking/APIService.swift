@@ -170,8 +170,16 @@ public final class APIService: APIServiceProtocol {
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws(APIError) {
         var urlRequest = try buildURLRequest(from: request)
+        // Un solo intento (ver arriba): el contexto es siempre el del intento 1.
+        let context = RequestContext(request: urlRequest, attempt: 1)
         for interceptor in interceptors {
-            urlRequest = await interceptor.willSend(urlRequest)
+            do {
+                urlRequest = try await interceptor.willSend(urlRequest, context: context)
+            } catch {
+                let apiError = APIError(code: .interceptor, request: APIError.RequestSummary(urlRequest), underlying: error)
+                await notifyInterceptorsOfFailure(apiError, context: context)
+                throw apiError
+            }
         }
         let summary = APIError.RequestSummary(urlRequest)
         let transferProgress = progress.map { TransferProgress(onDownload: $0) }
@@ -184,25 +192,25 @@ public final class APIService: APIServiceProtocol {
             // pinning rechazó llega aquí como `PinningFailure` (lo traduce
             // `URLSessionTransport`), nunca confundido con `.cancelled`.
             let apiError = APIError(code: .untrustedServer, request: summary, underlying: pinningFailure)
-            await notifyInterceptorsOfFailure(urlRequest, error: apiError)
+            await notifyInterceptorsOfFailure(apiError, context: context)
             throw apiError
         } catch let urlError as URLError {
             let code: APIError.Code = urlError.code == .cancelled ? .cancelled : .transport
             let apiError = APIError(code: code, request: summary, underlying: urlError)
-            await notifyInterceptorsOfFailure(urlRequest, error: apiError)
+            await notifyInterceptorsOfFailure(apiError, context: context)
             throw apiError
         } catch let cancellation as CancellationError {
             let apiError = APIError(code: .cancelled, request: summary, underlying: cancellation)
-            await notifyInterceptorsOfFailure(urlRequest, error: apiError)
+            await notifyInterceptorsOfFailure(apiError, context: context)
             throw apiError
         } catch {
             let apiError = (error as? APIError) ?? APIError(code: .unexpected, request: summary, underlying: error)
-            await notifyInterceptorsOfFailure(urlRequest, error: apiError)
+            await notifyInterceptorsOfFailure(apiError, context: context)
             throw apiError
         }
 
         for interceptor in interceptors {
-            await interceptor.didReceive(response, data: Data())
+            await interceptor.didReceive(response, data: Data(), context: context)
         }
 
         guard (200..<300).contains(response.statusCode) else {
@@ -216,7 +224,7 @@ public final class APIService: APIServiceProtocol {
                 request: summary,
                 response: APIError.ResponseSummary(response: response, body: Data())
             )
-            await notifyInterceptorsOfFailure(urlRequest, error: apiError)
+            await notifyInterceptorsOfFailure(apiError, context: context)
             throw apiError
         }
     }
@@ -370,8 +378,8 @@ public final class APIService: APIServiceProtocol {
             // de ESTA tarea fue quien canceló), nunca confundido con la
             // cancelación del llamador (`.cancelled`, más abajo).
             let apiError = APIError(code: .untrustedServer, request: summary, underlying: pinningFailure)
-            await notifyInterceptorsOfFailure(urlRequest, error: apiError)
-            throw apiError
+            await notifyInterceptorsOfFailure(apiError, context: context)
+            throw AttemptFailure(error: apiError, context: context)
         } catch let urlError as URLError {
             // `.cancelled` aquí es SIEMPRE la cancelación del llamador: un
             // fallo de pinning ya se interceptó arriba como `PinningFailure`.

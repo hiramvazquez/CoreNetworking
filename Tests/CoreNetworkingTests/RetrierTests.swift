@@ -29,6 +29,12 @@ private actor HeaderGatedTransport: HTTPTransport {
         )!
         return (body, response)
     }
+
+    func download(_ request: URLRequest, to destination: URL, progress: TransferProgress?) async throws -> HTTPURLResponse {
+        let (data, response) = try await send(request, progress: progress)
+        try data.write(to: destination, options: .atomic)
+        return response
+    }
 }
 
 private actor TokenBox {

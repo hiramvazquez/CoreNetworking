@@ -17,7 +17,7 @@ import os
 ///     try await service.execute(GetRequest())
 /// }
 /// await clock.waitUntilSleeping()   // el pipeline llegó al backoff
-/// await clock.advance(by: .seconds(10))  // dispara el siguiente intento
+/// clock.advance(by: .seconds(10))  // dispara el siguiente intento — no es async
 /// let result = try await task.value
 /// ```
 ///

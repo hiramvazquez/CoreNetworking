@@ -166,16 +166,13 @@ public final class MockURLProtocol: URLProtocol {
         }
 
         if let latency = exchange.latency {
-            // nonisolated(unsafe) JUSTIFICADO: URLProtocol no es Sendable para el
-            // compilador, pero el URL loading system mantiene viva la instancia
-            // hasta finish/stopLoading y los callbacks de `client` son seguros
-            // desde cualquier hilo; el único estado mutable propio
-            // (`pendingDelivery`) va bajo lock.
-            nonisolated(unsafe) let protocolInstance = self
+            // `self` cruza al Task con la conformidad `@unchecked Sendable` de abajo
+            // (justificada allí). Un `nonisolated(unsafe) let` local ya no basta: los
+            // compiladores más recientes lo tratan como error de `sending`.
             let task = Task {
                 try? await Task.sleep(for: latency)
                 guard !Task.isCancelled else { return }
-                protocolInstance.deliver(exchange, response: response)
+                self.deliver(exchange, response: response)
             }
             pendingDelivery.withLock { $0 = task }
         } else {
@@ -217,3 +214,9 @@ public final class MockURLProtocol: URLProtocol {
         client?.urlProtocolDidFinishLoading(self)
     }
 }
+
+// `@unchecked Sendable` JUSTIFICADO: `URLProtocol` no es `Sendable` para el compilador,
+// pero el URL loading system mantiene viva la instancia hasta finish/stopLoading y los
+// callbacks de `client` son seguros desde cualquier hilo; el único estado mutable propio
+// (`pendingDelivery`) va bajo `OSAllocatedUnfairLock`.
+extension MockURLProtocol: @unchecked Sendable {}

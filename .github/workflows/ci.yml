@@ -68,8 +68,8 @@ jobs:
         run: |
           set -o pipefail
           for dest in 'generic/platform=iOS Simulator' 'platform=macOS'; do
-            log=$(xcodebuild docbuild -scheme CoreNetworking-Package -destination "$dest" -derivedDataPath "$(mktemp -d)" 2>&1)
-            echo "$log" | grep -E "warning:|error:|\*\* BUILD" | sort -u
+            log=$(xcodebuild docbuild -scheme CoreNetworking-Package -destination "$dest" -derivedDataPath "$(mktemp -d)" 2>&1) || true
+            echo "$log" | grep -E "warning:|error:|\*\* BUILD" | sort -u || true
             echo "$log" | grep -q "BUILD DOCUMENTATION SUCCEEDED" || exit 1
             ! echo "$log" | grep -qE "warning:|error:"
           done

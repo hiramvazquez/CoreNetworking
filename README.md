@@ -473,22 +473,122 @@ Soportado en la tabla ASN.1 de SPKI: RSA-2048/3072/4096, EC P-256/P-384.
 ## Interceptores
 
 ```swift
+public struct RequestContext: Sendable {
+    public let id: UUID
+    public let request: URLRequest
+    public let attempt: Int          // 1-based: el primer intento es 1
+    public let startedAt: ContinuousClock.Instant
+}
+
 public protocol RequestInterceptor: Sendable {
-    func willSend(_ request: URLRequest) async -> URLRequest
-    func didReceive(_ response: URLResponse, data: Data) async
-    func didFail(_ request: URLRequest, error: APIError) async
+    func willSend(_ request: URLRequest, context: RequestContext) async throws(APIError) -> URLRequest
+    func didReceive(_ response: HTTPURLResponse, data: Data, context: RequestContext) async
+    func didFail(_ error: APIError, context: RequestContext) async
 }
 ```
 
-Se invocan en orden. `didFail` recibe siempre el `APIError` ya mapeado (no
-`Error`), así que puede leer `code`, `statusCode` o `response` sin castear.
-Se notifica en TODOS los caminos de error del pipeline (transporte, respuesta
-inválida, non-2xx). Los errores de decodificación ocurren después del
-pipeline y no pasan por interceptores.
+Se invocan en orden por intento: `willSend` (todos) → transporte →
+`didReceive` → validación de status → en error: `didFail`. El MISMO
+`RequestContext` (mismo `id`) fluye a través de las tres llamadas de un mismo
+intento; un reintento crea un `RequestContext` nuevo (`attempt` incrementado,
+`id` distinto) — así se correlacionan logs y métricas por intento sin
+confundir dos requests concurrentes a la misma URL.
 
-`LoggingInterceptor` (incluido) loguea vía `os.Logger`; los headers sensibles
+`willSend` puede **abortar** el request lanzando: el transporte nunca llega a
+verlo, `APIService` envuelve lo lanzado en `APIError(code: .interceptor,
+underlying: <lo que lanzaste>)`, llama a `didFail` exactamente una vez, y ese
+error pasa por `retriers`/`RetryPolicy` como cualquier otro fallo.
+
+`didReceive` recibe siempre `HTTPURLResponse` (no `URLResponse`, sin castear)
+y solo se llama cuando la respuesta ES una; si no lo es, va directo a
+`.invalidResponse` → `didFail`. `didFail` recibe siempre el `APIError` ya
+mapeado, así que puede leer `code`, `statusCode` o `response` sin castear, y
+se notifica en TODOS los caminos de error del pipeline (interceptor que
+aborta, transporte, respuesta inválida, non-2xx).
+
+`LoggingInterceptor` (incluido) loguea vía `os.Logger`, correlacionado por
+`context.id` y con la duración medida contra `context.startedAt`
+(`ContinuousClock`, no un `Date` de pared). Los headers sensibles
 (Authorization, Cookie, api keys, tokens…) se redactan SIEMPRE — no hay opción
 para des-redactar. Bodies solo en DEBUG y con opt-in.
+
+`CoreNetworkingTestSupport` incluye `RecordingInterceptor`: graba cada
+`willSend`/`didReceive`/`didFail` (con su `RequestContext`), en orden, para
+probar tus propios interceptores/retriers sin escribir un spy a medida —
+opcionalmente configurable para que `willSend` lance un error fijo, y así
+probar caminos de aborto.
+
+## Reintento por interceptor (`RequestRetrier`)
+
+```swift
+public enum RetryDecision: Sendable, Equatable {
+    case doNotRetry
+    case retry
+    case retryAfter(Duration)   // manda sobre RetryPolicy Y sobre Retry-After
+}
+
+public protocol RequestRetrier: Sendable {
+    func retry(_ error: APIError, context: RequestContext) async -> RetryDecision
+}
+```
+
+`APIService.init(retriers:)` recibe una lista de `RequestRetrier`, consultada
+ANTES que `RetryPolicy` en cada intento fallido: el primero que NO devuelva
+`.doNotRetry` decide (ni el resto de retriers ni `RetryPolicy` se consultan);
+si todos devuelven `.doNotRetry` (o la lista está vacía), decide
+`RetryPolicy` — el mismo comportamiento que sin `RequestRetrier`.
+`RetryPolicy.maxAttempts` acota ambos caminos.
+
+Una decisión `.retry`/`.retryAfter` hace que el MISMO request vuelva a pasar
+por `willSend` — un interceptor que lee un token fresco en cada llamada
+recoge lo que haya cambiado desde el intento que falló.
+
+## Autenticación y refresh de token
+
+```swift
+public protocol TokenRefreshing: Sendable {
+    func refreshToken() async throws
+}
+
+public actor TokenRefresher: TokenRefreshing {
+    public init(refresh: @escaping @Sendable () async throws -> Void)
+    public func refreshToken() async throws   // deduplica refreshes en vuelo
+}
+
+public struct BearerTokenInterceptor: RequestInterceptor {
+    public init(tokenProvider: @escaping @Sendable () async -> String?)
+}
+
+public struct TokenRefreshRetrier: RequestRetrier {
+    public init(refresher: any TokenRefreshing)
+}
+```
+
+```swift
+let refresher = TokenRefresher {
+    let newToken = try await authClient.refresh()
+    await tokenStore.save(newToken)
+}
+
+let service = APIService(
+    configuration: configuration,
+    interceptors: [BearerTokenInterceptor { await tokenStore.currentToken }],
+    retriers: [TokenRefreshRetrier(refresher: refresher)]
+)
+```
+
+`BearerTokenInterceptor` añade `Authorization: Bearer <token>` leyendo el
+token FRESCO en cada `willSend` — incluido el que dispara
+`TokenRefreshRetrier` tras un refresh. `TokenRefreshRetrier.retry` solo actúa
+en el PRIMER intento (`context.attempt == 1`) de un 401: refresca y responde
+`.retry` si funciona, `.doNotRetry` si el refresh falla (el 401 original
+llega al consumidor sin requests extra) — nunca reintenta un 401 en un
+intento posterior, para no entrar en un bucle si el token nuevo tampoco vale.
+
+`TokenRefresher` es un `actor` porque N requests que reciben 401 a la vez
+deben disparar EXACTAMENTE un refresh: si ya hay uno en vuelo, los demás
+esperan su resultado en vez de arrancar el suyo — crítico cuando el refresh
+token del backend es de un solo uso.
 
 ## Testing
 

@@ -9,18 +9,18 @@ import CoreNetworkingTestSupport
 @Suite("Cancelación de execute / upload / download / backoff")
 struct CancellationTests {
     private struct SlowRequest: BaseRequest {
-        typealias Parameters = EmptyParameters
+        typealias Response = Payload
         let path = "/slow"
-        let method: HTTPMethod = .GET
+        let method: HTTPMethod = .get
     }
 
     private struct SlowPut: BaseRequest {
-        typealias Parameters = EmptyParameters
+        typealias Response = Payload
         let path = "/slow"
-        let method: HTTPMethod = .PUT
+        let method: HTTPMethod = .put
     }
 
-    private struct Payload: Decodable { let ok: Bool }
+    private struct Payload: Decodable, Sendable { let ok: Bool }
 
     private func makeService(
         host: String,
@@ -31,7 +31,7 @@ struct CancellationTests {
         return (APIService(configuration: configuration, retryPolicy: policy), baseURL)
     }
 
-    private func registerSlowMock(url: URL, method: HTTPMethod = .GET) {
+    private func registerSlowMock(url: URL, method: HTTPMethod = .get) {
         MockURLProtocol.register(MockNetworkExchange(
             method: method,
             url: url,
@@ -69,14 +69,14 @@ struct CancellationTests {
         registerSlowMock(url: baseURL.appendingPathComponent("/slow"))
 
         await expectCancelledFast {
-            let _: Payload = try await service.execute(request: SlowRequest())
+            let _: Payload = try await service.execute(SlowRequest())
         }
     }
 
     @Test("upload se cancela de verdad")
     func uploadCancels() async throws {
         let (service, baseURL) = try makeService(host: "cancel-upload.test")
-        registerSlowMock(url: baseURL.appendingPathComponent("/slow"), method: .PUT)
+        registerSlowMock(url: baseURL.appendingPathComponent("/slow"), method: .put)
 
         await expectCancelledFast {
             let _: Payload = try await service.upload(request: SlowPut(), data: Data("x".utf8))
@@ -104,7 +104,7 @@ struct CancellationTests {
         ))
 
         await expectCancelledFast {
-            let _: Payload = try await service.execute(request: SlowRequest())
+            let _: Payload = try await service.execute(SlowRequest())
         }
         let count = MockURLProtocol.recordedRequests.filter { $0.url?.host == host }.count
         #expect(count == 1, "no debe haber segundo request tras cancelar en el backoff")

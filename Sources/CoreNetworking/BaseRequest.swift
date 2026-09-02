@@ -1,8 +1,15 @@
 import Foundation
 
-/// HTTP methods supported by the API
+/// HTTP method. Lowercase cases, `rawValue` in uppercase — la convención de
+/// Swift (y de `HTTPTypes` de Apple), no la del wire format.
 public enum HTTPMethod: String, Sendable {
-    case GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS
+    case get = "GET"
+    case post = "POST"
+    case put = "PUT"
+    case patch = "PATCH"
+    case delete = "DELETE"
+    case head = "HEAD"
+    case options = "OPTIONS"
 
     /// Whether the method is idempotent per RFC 9110 (safe to retry).
     ///
@@ -10,122 +17,84 @@ public enum HTTPMethod: String, Sendable {
     /// only retry when the request opts in (`allowsNonIdempotentRetry`).
     public var isIdempotent: Bool {
         switch self {
-        case .GET, .HEAD, .PUT, .DELETE, .OPTIONS: true
-        case .POST, .PATCH: false
+        case .get, .head, .put, .delete, .options: true
+        case .post, .patch: false
         }
     }
 }
 
-/// Protocol for request parameters that can be encoded to JSON
-public protocol RequestParameters: Encodable, Sendable {}
-
-/// Empty parameters for requests that don't need a body
-public struct EmptyParameters: RequestParameters {
-    public init() {}
-}
-
-/// Base protocol for all API requests
+/// A network endpoint as a complete, self-describing type: what to ask
+/// (`path`, `method`, `body`, `queryItems`) and what to expect back
+/// (`Response`). No boilerplate `typealias` for a marker protocol on every
+/// GET, and no ambiguity at the call site about what `execute` returns.
 ///
-/// Implement this protocol to define type-safe API requests:
-///
-/// ## Example - Simple GET Request
+/// ## Example — GET, no body, no response to decode
 /// ```swift
-/// struct GetGamesRequest: BaseRequest {
-///     typealias Parameters = EmptyParameters
-///     let path = "/api/games"
-///     let method: HTTPMethod = .GET
+/// struct GetGames: BaseRequest {
+///     let path = "/games"
+///     let method = HTTPMethod.get
 /// }
+/// // execute(GetGames()) -> Empty
 /// ```
 ///
-/// ## Example - POST Request with Body
+/// ## Example — GET with a typed response
 /// ```swift
-/// struct CreateGameRequest: BaseRequest {
-///     struct Body: RequestParameters {
-///         let title: String
-///         let genre: String
-///     }
-///
-///     let path = "/api/games"
-///     let method: HTTPMethod = .POST
-///     let parameters: Body?
-///
-///     init(title: String, genre: String) {
-///         self.parameters = Body(title: title, genre: genre)
-///     }
+/// struct GetGames: BaseRequest {
+///     struct Response: Decodable, Sendable { let games: [Game] }
+///     let path = "/games"
+///     let method = HTTPMethod.get
 /// }
+/// // execute(GetGames()) -> GetGames.Response
 /// ```
 ///
-/// ## Example - GET Request with Query Parameters
+/// ## Example — POST with a typed body and response
 /// ```swift
-/// struct SearchGamesRequest: BaseRequest {
-///     typealias Parameters = EmptyParameters
-///     let path = "/api/games"
-///     let method: HTTPMethod = .GET
+/// struct CreateGame: BaseRequest {
+///     struct Body: Encodable, Sendable { let title: String }
+///     struct Response: Decodable, Sendable { let id: String }
 ///
-///     let platform: String?
-///     let genre: String?
+///     let path = "/games"
+///     let method = HTTPMethod.post
+///     let body: Body?
 ///
-///     var queryItems: [URLQueryItem]? {
-///         var items: [URLQueryItem] = []
-///         if let platform {
-///             items.append(URLQueryItem(name: "platform", value: platform))
-///         }
-///         if let genre {
-///             items.append(URLQueryItem(name: "genre", value: genre))
-///         }
-///         return items.isEmpty ? nil : items
-///     }
+///     init(title: String) { self.body = Body(title: title) }
 /// }
 /// ```
 public protocol BaseRequest: Sendable {
-    /// Associated type for request body parameters
-    associatedtype Parameters: RequestParameters
-    
-    /// API endpoint path (relative to base URL)
-    ///
-    /// Examples: "/api/games", "/users/123", "/auth/login"
-    /// **Must start with "/"**
+    /// Request body, encoded with `NetworkingConfiguration.makeEncoder`.
+    /// Defaults to `Never`: a request that sends no body simply doesn't
+    /// declare one.
+    associatedtype Body: Encodable & Sendable = Never
+
+    /// Expected response. Defaults to `Empty`: a request that doesn't
+    /// declare one gets `Empty()` back regardless of what the server sends —
+    /// see `Empty` for the 204/empty-body handling.
+    associatedtype Response: Decodable & Sendable = Empty
+
+    /// Endpoint path, relative to `NetworkingConfiguration.baseURL`.
     var path: String { get }
-    
-    /// HTTP method for the request
+
+    /// HTTP method.
     var method: HTTPMethod { get }
-    
-    /// HTTP headers specific to this request
-    ///
-    /// These will be merged with default headers from `NetworkingConfiguration`.
-    /// Request headers take precedence over defaults.
+
+    /// Headers specific to this request. Merged over
+    /// `NetworkingConfiguration.defaultHeaders` and the package's own
+    /// `Accept`/`Content-Type` — this request's value always wins. Default: `[:]`.
     var headers: [String: String] { get }
-    
-    /// Request body parameters (for POST, PUT, PATCH)
-    ///
-    /// Use `EmptyParameters` for requests without a body (GET, DELETE).
-    var parameters: Parameters? { get }
-    
-    /// Query parameters (for GET requests with URL parameters)
-    ///
-    /// These are automatically URL-encoded and appended to the path.
-    ///
-    /// ## Example
-    /// ```swift
-    /// var queryItems: [URLQueryItem]? {
-    ///     [
-    ///         URLQueryItem(name: "page", value: "1"),
-    ///         URLQueryItem(name: "limit", value: "20")
-    ///     ]
-    /// }
-    /// // Results in: /api/games?page=1&limit=20
-    /// ```
-    var queryItems: [URLQueryItem]? { get }
-    
-    /// Request timeout interval in seconds
-    ///
-    /// Override to customize timeout for slow endpoints.
-    /// Default is 30 seconds.
-    var timeoutInterval: TimeInterval { get }
+
+    /// Request body. `nil` (the default) sends no body and omits
+    /// `Content-Type`.
+    var body: Body? { get }
+
+    /// Query items appended to `path`. Default: `[]`.
+    var queryItems: [URLQueryItem] { get }
+
+    /// Request timeout. Default: 30 seconds.
+    var timeout: Duration { get }
 
     /// Opt-in to retry non-idempotent methods (POST/PATCH).
     ///
-    /// Default is `false`: retrying a non-idempotent request can duplicate its
+    /// Default `false`: retrying a non-idempotent request can duplicate its
     /// effect (double charge, double insert). Set `true` ONLY when the
     /// endpoint is safe to repeat (e.g. idempotency keys server-side).
     var allowsNonIdempotentRetry: Bool { get }
@@ -134,138 +103,20 @@ public protocol BaseRequest: Sendable {
 // MARK: - Default Implementations
 
 public extension BaseRequest {
-    /// Default Content-Type header for JSON requests
-    var headers: [String: String] {
-        ["Content-Type": "application/json"]
-    }
-    
-    /// Default: no body parameters
-    var parameters: Parameters? {
-        nil
-    }
-    
-    /// Default: no query parameters
-    var queryItems: [URLQueryItem]? {
-        nil
-    }
-    
-    /// Default timeout: 30 seconds
-    var timeoutInterval: TimeInterval {
-        30.0
-    }
-
-    /// Default: non-idempotent methods are NOT retried.
-    var allowsNonIdempotentRetry: Bool {
-        false
-    }
+    var headers: [String: String] { [:] }
+    var body: Body? { nil }
+    var queryItems: [URLQueryItem] { [] }
+    var timeout: Duration { .seconds(30) }
+    var allowsNonIdempotentRetry: Bool { false }
 }
 
-// MARK: - Request Validation
+// MARK: - Empty
 
-/// Errors that can occur during request validation
-public enum RequestValidationError: Error, Sendable, CustomStringConvertible {
-    case pathMustStartWithSlash(String)
-    case pathContainsInvalidCharacters(String)
-    case emptyPath
-    case invalidQueryParameter(name: String, reason: String)
-    
-    public var description: String {
-        switch self {
-        case .pathMustStartWithSlash(let path):
-            return "Path must start with '/': '\(path)'"
-        case .pathContainsInvalidCharacters(let path):
-            return "Path contains invalid characters: '\(path)'"
-        case .emptyPath:
-            return "Path cannot be empty"
-        case .invalidQueryParameter(let name, let reason):
-            return "Invalid query parameter '\(name)': \(reason)"
-        }
-    }
-}
-
-public extension BaseRequest {
-    /// Validates the request and returns it if valid.
-    ///
-    /// Call this before executing a request to ensure it's well-formed.
-    ///
-    /// ## Example
-    /// ```swift
-    /// let request = try MyRequest().validated()
-    /// let response = try await service.execute(request: request)
-    /// ```
-    ///
-    /// - Throws: `RequestValidationError` if validation fails.
-    /// - Returns: Self if validation passes.
-    func validated() throws -> Self {
-        // Validate path
-        guard !path.isEmpty else {
-            throw RequestValidationError.emptyPath
-        }
-        
-        guard path.hasPrefix("/") else {
-            throw RequestValidationError.pathMustStartWithSlash(path)
-        }
-        
-        // Check for obviously invalid characters
-        let invalidCharacters = CharacterSet(charactersIn: " \t\n\r")
-        if path.unicodeScalars.contains(where: { invalidCharacters.contains($0) }) {
-            throw RequestValidationError.pathContainsInvalidCharacters(path)
-        }
-        
-        // Validate query parameters
-        if let queryItems = queryItems {
-            for item in queryItems {
-                if item.name.isEmpty {
-                    throw RequestValidationError.invalidQueryParameter(
-                        name: "(empty)",
-                        reason: "Query parameter name cannot be empty"
-                    )
-                }
-            }
-        }
-        
-        return self
-    }
-    
-    /// Returns whether the request is valid without throwing.
-    ///
-    /// - Returns: `true` if the request passes validation.
-    var isValid: Bool {
-        (try? validated()) != nil
-    }
-    
-    /// Validates the request in DEBUG builds only.
-    ///
-    /// Use this during development to catch issues early without
-    /// impacting production performance.
-    ///
-    /// - Returns: Self (always succeeds in release builds).
-    func debugValidated() -> Self {
-        #if DEBUG
-        do {
-            return try validated()
-        } catch {
-            assertionFailure("Request validation failed: \(error)")
-            return self
-        }
-        #else
-        return self
-        #endif
-    }
-}
-
-// MARK: - Request Description
-
-public extension BaseRequest {
-    /// Human-readable description of the request for logging.
-    var requestDescription: String {
-        var desc = "\(method.rawValue) \(path)"
-        
-        if let queryItems = queryItems, !queryItems.isEmpty {
-            let params = queryItems.map { "\($0.name)=\($0.value ?? "")" }.joined(separator: "&")
-            desc += "?\(params)"
-        }
-        
-        return desc
-    }
+/// Decoded response for a request that doesn't declare one: `Response`'s
+/// default. Also what `execute` returns for a 204/205 (or any 2xx with an
+/// empty body) when the request's declared `Response` IS `Empty` — a request
+/// that declares a real `Response` and gets an empty body back is a decoding
+/// error, not `Empty()`.
+public struct Empty: Decodable, Sendable {
+    public init() {}
 }

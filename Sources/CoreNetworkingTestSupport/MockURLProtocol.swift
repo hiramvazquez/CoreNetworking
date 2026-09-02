@@ -39,7 +39,7 @@ public struct MockNetworkExchange: Sendable {
 
     /// Registers a single, reusable response — the common case.
     public init(
-        method: HTTPMethod = .GET,
+        method: HTTPMethod = .get,
         url: URL,
         response: MockResponse,
         error: URLError? = nil,
@@ -52,7 +52,7 @@ public struct MockNetworkExchange: Sendable {
     /// 200 to test "retry that eventually succeeds" through the real URL
     /// loading system).
     public init(
-        method: HTTPMethod = .GET,
+        method: HTTPMethod = .get,
         url: URL,
         responses: [MockResponse],
         error: URLError? = nil,

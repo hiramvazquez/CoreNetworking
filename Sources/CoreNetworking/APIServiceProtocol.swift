@@ -7,14 +7,32 @@ import Foundation
 /// `APIError` (typed throws), so callers can switch exhaustively without
 /// casting.
 public protocol APIServiceProtocol: Sendable {
-    /// Executes a network request and returns the decoded response.
+    /// Executes `request` and returns its decoded `Response`.
     ///
-    /// - Parameter request: The request to execute
-    /// - Returns: Decoded response of type `Response`
-    /// - Throws: `APIError` if the request fails or the response cannot be decoded
-    func execute<Request: BaseRequest, Response: Decodable>(
-        request: Request
-    ) async throws(APIError) -> Response
+    /// The response type is not inferred at the call site: it is
+    /// `Request.Response`, declared by the request itself. A request that
+    /// doesn't declare one gets `Empty` back (see `Empty`, `BaseRequest`).
+    ///
+    /// - Parameter request: The request to execute.
+    /// - Returns: `request`'s declared `Response`, decoded.
+    /// - Throws: `APIError` if the request fails or the response cannot be decoded.
+    func execute<Request: BaseRequest>(
+        _ request: Request
+    ) async throws(APIError) -> Request.Response
+
+    /// Executes `request` and decodes the response as `Type`, overriding
+    /// `Request.Response`. For the odd call site that needs a different (or
+    /// partial) view of the payload than the request declares.
+    ///
+    /// - Parameters:
+    ///   - request: The request to execute.
+    ///   - type: The type to decode instead of `Request.Response`.
+    /// - Returns: `type`, decoded.
+    /// - Throws: `APIError` if the request fails or the response cannot be decoded.
+    func execute<Request: BaseRequest, Value: Decodable & Sendable>(
+        _ request: Request,
+        as type: Value.Type
+    ) async throws(APIError) -> Value
 
     /// Uploads data with progress tracking.
     ///

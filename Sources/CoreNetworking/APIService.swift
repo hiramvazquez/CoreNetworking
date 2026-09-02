@@ -20,7 +20,7 @@ import Foundation
 ///     retryPolicy: .conservative,
 ///     interceptors: [LoggingInterceptor()]
 /// )
-/// let games: [Game] = try await service.execute(request: GetGamesRequest())
+/// let games: [Game] = try await service.execute(GetGamesRequest())
 /// ```
 public final class APIService: APIServiceProtocol {
     private let configuration: NetworkingConfiguration
@@ -71,7 +71,10 @@ public final class APIService: APIServiceProtocol {
         interceptors: [any RequestInterceptor] = [],
         sslPinning: SSLPinningConfiguration? = nil
     ) {
-        let sessionConfiguration = URLSessionConfiguration.default
+        // La fábrica es de `configuration` (`NetworkingConfiguration.sessionConfiguration`),
+        // no `.default` a pelo: es lo que hace que `sessionConfiguration` llegue
+        // a la `URLSession` real que construye `URLSessionTransport`.
+        let sessionConfiguration = configuration.sessionConfiguration()
         if let protocolClasses = configuration.protocolClasses {
             sessionConfiguration.protocolClasses = protocolClasses
         }
@@ -85,13 +88,23 @@ public final class APIService: APIServiceProtocol {
 
     // MARK: - Execute
 
-    public func execute<Request: BaseRequest, Response: Decodable>(
-        request: Request
-    ) async throws(APIError) -> Response {
+    public func execute<Request: BaseRequest>(
+        _ request: Request
+    ) async throws(APIError) -> Request.Response {
         let (data, response, summary) = try await performWithRetry(request) { [transport] urlRequest in
             try await transport.send(urlRequest, progress: nil)
         }
-        return try Self.decode(Response.self, from: data, request: summary, response: response, using: configuration.makeDecoder)
+        return try Self.decode(Request.Response.self, from: data, request: summary, response: response, using: configuration.makeDecoder)
+    }
+
+    public func execute<Request: BaseRequest, Value: Decodable & Sendable>(
+        _ request: Request,
+        as type: Value.Type
+    ) async throws(APIError) -> Value {
+        let (data, response, summary) = try await performWithRetry(request) { [transport] urlRequest in
+            try await transport.send(urlRequest, progress: nil)
+        }
+        return try Self.decode(Value.self, from: data, request: summary, response: response, using: configuration.makeDecoder)
     }
 
     // MARK: - Upload
@@ -234,9 +247,15 @@ public final class APIService: APIServiceProtocol {
         return (data, httpResponse, summary)
     }
 
-    /// Decodes the response body. Any failure — a `DecodingError` or anything
-    /// else the decoder throws — becomes `.decoding`; the body stays attached
-    /// via `response` so the consumer can inspect what actually came back.
+    /// Decodes the response body. `Response == Empty` always succeeds with
+    /// `Empty()`, regardless of what the server actually sent (HEAD, DELETE
+    /// and every 204 land here without inspecting `data`). Any other
+    /// `Response` with an empty body — most commonly a 204/205 the request
+    /// didn't expect — is `.decoding`, not a silently-conjured value: the
+    /// caller asked for a type and nothing arrived to decode. Any other
+    /// failure — a `DecodingError` or anything else the decoder throws — also
+    /// becomes `.decoding`; the body stays attached via `response` so the
+    /// consumer can inspect what actually came back.
     private static func decode<Response: Decodable>(
         _ type: Response.Type,
         from data: Data,
@@ -244,6 +263,23 @@ public final class APIService: APIServiceProtocol {
         response: HTTPURLResponse,
         using makeDecoder: @Sendable () -> JSONDecoder
     ) throws(APIError) -> Response {
+        if let empty = Empty() as? Response {
+            return empty
+        }
+        guard !data.isEmpty else {
+            throw APIError(
+                code: .decoding,
+                request: request,
+                response: APIError.ResponseSummary(response: response, body: data),
+                underlying: DecodingError.valueNotFound(
+                    Response.self,
+                    DecodingError.Context(
+                        codingPath: [],
+                        debugDescription: "Expected a body to decode \(Response.self), got an empty body (status \(response.statusCode))."
+                    )
+                )
+            )
+        }
         do {
             return try makeDecoder().decode(Response.self, from: data)
         } catch {
@@ -263,14 +299,14 @@ public final class APIService: APIServiceProtocol {
         from request: Request
     ) throws(APIError) -> URLRequest {
         guard var urlComponents = URLComponents(
-            url: configuration.baseURL.appendingPathComponent(request.path),
+            url: configuration.baseURL.appending(path: request.path),
             resolvingAgainstBaseURL: true
         ) else {
             throw APIError(code: .invalidURL, request: APIError.RequestSummary(method: request.method, url: nil))
         }
 
-        if let queryItems = request.queryItems, !queryItems.isEmpty {
-            urlComponents.queryItems = queryItems
+        if !request.queryItems.isEmpty {
+            urlComponents.queryItems = request.queryItems
         }
 
         guard let url = urlComponents.url else {
@@ -279,7 +315,16 @@ public final class APIService: APIServiceProtocol {
 
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = request.method.rawValue
-        urlRequest.timeoutInterval = request.timeoutInterval
+        urlRequest.timeoutInterval = request.timeout.timeInterval
+
+        // Accept siempre; Content-Type SOLO si hay body (un GET sin body no
+        // describe un Content-Type porque no envía contenido). Ambos son la
+        // base: los defaults de la configuración y los headers del request
+        // (en ese orden) pueden sobrescribirlos.
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        if request.body != nil {
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
 
         // Merge headers: default headers first, request headers overwrite.
         for (key, value) in configuration.defaultHeaders {
@@ -289,9 +334,9 @@ public final class APIService: APIServiceProtocol {
             urlRequest.setValue(value, forHTTPHeaderField: key)
         }
 
-        if let parameters = request.parameters {
+        if let body = request.body {
             do {
-                urlRequest.httpBody = try JSONEncoder().encode(parameters)
+                urlRequest.httpBody = try configuration.makeEncoder().encode(body)
             } catch {
                 // El error original (EncodingError u otro) nunca se pierde.
                 throw APIError(

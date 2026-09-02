@@ -17,7 +17,7 @@ import Foundation
 /// ## Example
 /// ```swift
 /// do {
-///     let games: [Game] = try await service.execute(request: GetGamesRequest())
+///     let games: [Game] = try await service.execute(GetGamesRequest())
 /// } catch {
 ///     // typed throws: `error` ya es APIError
 ///     switch error.category {
@@ -94,7 +94,7 @@ public struct APIError: Error, Sendable {
         }
 
         init(_ urlRequest: URLRequest) {
-            self.method = urlRequest.httpMethod.flatMap(HTTPMethod.init(rawValue:)) ?? .GET
+            self.method = urlRequest.httpMethod.flatMap(HTTPMethod.init(rawValue:)) ?? .get
             self.url = urlRequest.url
         }
     }

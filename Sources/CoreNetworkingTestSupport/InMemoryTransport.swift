@@ -35,14 +35,14 @@ public actor InMemoryTransport: HTTPTransport {
         /// reusable mock, same as `MockURLProtocol`).
         public let responses: [Outcome]
 
-        public init(method: HTTPMethod = .GET, url: URL, responses: [Outcome]) {
+        public init(method: HTTPMethod = .get, url: URL, responses: [Outcome]) {
             self.method = method
             self.url = url
             self.responses = responses
         }
 
         /// Convenience for the common case: a single, reusable outcome.
-        public init(method: HTTPMethod = .GET, url: URL, response: Outcome) {
+        public init(method: HTTPMethod = .get, url: URL, response: Outcome) {
             self.init(method: method, url: url, responses: [response])
         }
     }
@@ -81,7 +81,7 @@ public actor InMemoryTransport: HTTPTransport {
         recordedRequests.append(request)
 
         guard let url = request.url else { throw URLError(.badURL) }
-        let method = request.httpMethod ?? HTTPMethod.GET.rawValue
+        let method = request.httpMethod ?? HTTPMethod.get.rawValue
         let key = MatchKey(method: method, url: url)
 
         guard let outcomes = exchanges[key], !outcomes.isEmpty else {

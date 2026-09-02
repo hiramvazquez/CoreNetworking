@@ -12,18 +12,18 @@ import CoreNetworkingTestSupport
 @Suite("Retry: comportamiento observable")
 struct RetryBehaviorTests {
     private struct GetRequest: BaseRequest {
-        typealias Parameters = EmptyParameters
+        typealias Response = Payload
         let path = "/resource"
-        let method: HTTPMethod = .GET
+        let method: HTTPMethod = .get
     }
 
     private struct PostRequest: BaseRequest {
-        typealias Parameters = EmptyParameters
+        typealias Response = Payload
         let path = "/resource"
-        let method: HTTPMethod = .POST
+        let method: HTTPMethod = .post
     }
 
-    private struct Payload: Decodable { let ok: Bool }
+    private struct Payload: Decodable, Sendable { let ok: Bool }
 
     private let baseURL = URL(string: "https://unit.test")!
     private var resourceURL: URL { baseURL.appendingPathComponent("/resource") }
@@ -50,7 +50,7 @@ struct RetryBehaviorTests {
         retries: Int
     ) async throws -> Payload {
         let task = Task { () async throws(APIError) -> Payload in
-            try await service.execute(request: request)
+            try await service.execute(request)
         }
         for _ in 0..<retries {
             await clock.waitUntilSleeping()
@@ -80,7 +80,7 @@ struct RetryBehaviorTests {
         let apiService = APIService(configuration: configuration, transport: transport, retryPolicy: .noRetry)
 
         await #expect(throws: APIError.self) {
-            let _: Payload = try await apiService.execute(request: GetRequest())
+            let _: Payload = try await apiService.execute(GetRequest())
         }
         #expect(await transport.recorded.count == 1)
     }
@@ -88,12 +88,12 @@ struct RetryBehaviorTests {
     @Test("POST NO se reintenta por defecto (no idempotente, A4)")
     func postIsNotRetriedByDefault() async throws {
         let transport = InMemoryTransport()
-        await transport.register(InMemoryTransport.Exchange(method: .POST, url: resourceURL, response: .response(status: 500)))
+        await transport.register(InMemoryTransport.Exchange(method: .post, url: resourceURL, response: .response(status: 500)))
         let clock = ManualClock()
         let apiService = service(transport: transport, clock: clock, maxAttempts: 3)
 
         await #expect(throws: APIError.self) {
-            let _: Payload = try await apiService.execute(request: PostRequest())
+            let _: Payload = try await apiService.execute(PostRequest())
         }
         #expect(await transport.recorded.count == 1)
     }
@@ -101,19 +101,19 @@ struct RetryBehaviorTests {
     @Test("POST con allowsNonIdempotentRetry=true SÍ se reintenta (opt-in)")
     func postOptInRetries() async throws {
         struct OptInPostRequest: BaseRequest {
-            typealias Parameters = EmptyParameters
+            typealias Response = Payload
             let path = "/resource"
-            let method: HTTPMethod = .POST
+            let method: HTTPMethod = .post
             let allowsNonIdempotentRetry = true
         }
 
         let transport = InMemoryTransport()
-        await transport.register(InMemoryTransport.Exchange(method: .POST, url: resourceURL, response: .response(status: 500)))
+        await transport.register(InMemoryTransport.Exchange(method: .post, url: resourceURL, response: .response(status: 500)))
         let clock = ManualClock()
         let apiService = service(transport: transport, clock: clock, maxAttempts: 3)
 
         let task = Task { () async throws(APIError) -> Payload in
-            try await apiService.execute(request: OptInPostRequest())
+            try await apiService.execute(OptInPostRequest())
         }
         await clock.waitUntilSleeping()
         clock.advance(by: .seconds(10))
@@ -142,7 +142,7 @@ struct RetryBehaviorTests {
         let apiService = service(transport: transport, clock: clock, maxAttempts: 2, initialDelay: .seconds(3600))
 
         let task = Task { () async throws(APIError) -> Payload in
-            try await apiService.execute(request: GetRequest())
+            try await apiService.execute(GetRequest())
         }
         await clock.waitUntilSleeping()
         let deadline = try #require(clock.pendingDeadlines.first)

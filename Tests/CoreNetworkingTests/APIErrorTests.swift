@@ -78,15 +78,15 @@ struct APIErrorTests {
         )
         let service = APIService(configuration: configuration, retryPolicy: .noRetry)
 
+        struct Payload: Decodable, Sendable { let ok: Bool }
         struct GetRequest: BaseRequest {
-            typealias Parameters = EmptyParameters
+            typealias Response = Payload
             let path = "/thing"
-            let method: HTTPMethod = .GET
+            let method: HTTPMethod = .get
         }
-        struct Payload: Decodable { let ok: Bool }
 
         do {
-            let _: Payload = try await service.execute(request: GetRequest())
+            let _: Payload = try await service.execute(GetRequest())
             Issue.record("debía fallar")
         } catch {
             #expect(error.code == .unexpected, "esperaba .unexpected, llegó \(error)")

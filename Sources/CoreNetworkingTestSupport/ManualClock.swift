@@ -14,7 +14,7 @@ import os
 ///                           retryPolicy: policy, clock: clock)
 ///
 /// let task = Task { () async throws(APIError) -> Payload in
-///     try await service.execute(request: GetRequest())
+///     try await service.execute(GetRequest())
 /// }
 /// await clock.waitUntilSleeping()   // el pipeline llegó al backoff
 /// await clock.advance(by: .seconds(10))  // dispara el siguiente intento

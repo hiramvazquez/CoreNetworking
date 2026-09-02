@@ -75,6 +75,14 @@ let mock = MockAPIService()
 mock.stub(GetGames.self, returning: GetGames.Response(games: ["chess"]))
 ```
 
+## Para agentes de IA en el proyecto que lo consume
+
+Si el proyecto también usa AppFoundation, `swift package --allow-writing-to-package-directory
+archinit` deja en la raíz el `AGENTS.md` con la arquitectura completa (los Services son la
+única capa que toca este paquete). Si CoreNetworking se usa solo, copia
+[`AGENTS.md`](AGENTS.md) a la raíz del proyecto y referéncialo desde `CLAUDE.md`
+(`@AGENTS.md`): el checkout del paquete queda fuera de lo que un agente lee.
+
 ## Más
 
 - [`AGENTS.md`](AGENTS.md) — cómo se adopta desde un `Service` de la arquitectura

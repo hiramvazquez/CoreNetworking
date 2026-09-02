@@ -5,16 +5,16 @@ import CoreNetworkingTestSupport
 
 @Suite("Pipeline de execute: URL, headers, decode y mock determinista")
 struct PipelineTests {
-    private struct SampleResponse: BaseResponse, Equatable {
+    private struct SampleResponse: Decodable, Sendable, Equatable {
         let value: Int
     }
 
     private struct SampleRequest: BaseRequest {
-        typealias Parameters = EmptyParameters
+        typealias Response = SampleResponse
         var path = "/sample"
-        var method: HTTPMethod = .GET
-        var headers: [String: String] = ["Content-Type": "application/json"]
-        var queryItems: [URLQueryItem]?
+        var method: HTTPMethod = .get
+        var headers: [String: String] = [:]
+        var queryItems: [URLQueryItem] = []
     }
 
     private func makeService(host: String) throws -> (APIService, URL) {
@@ -35,7 +35,7 @@ struct PipelineTests {
             response: MockResponse(statusCode: 200, data: Data(#"{"value":1}"#.utf8))
         ))
 
-        let result: SampleResponse = try await service.execute(request: SampleRequest())
+        let result: SampleResponse = try await service.execute(SampleRequest())
         #expect(result == SampleResponse(value: 1))
     }
 
@@ -49,7 +49,7 @@ struct PipelineTests {
 
         var request = SampleRequest()
         request.headers = ["X-Default": "overridden", "X-Request": "req"]
-        let _: SampleResponse = try await service.execute(request: request)
+        let _: SampleResponse = try await service.execute(request)
 
         let sent = try #require(
             MockURLProtocol.recordedRequests.last { $0.url?.host == "pipe-headers.test" }
@@ -75,7 +75,7 @@ struct PipelineTests {
             URLQueryItem(name: "page", value: "2"),
             URLQueryItem(name: "limit", value: "20")
         ]
-        let result: SampleResponse = try await service.execute(request: request)
+        let result: SampleResponse = try await service.execute(request)
         #expect(result.value == 1)
     }
 
@@ -89,7 +89,7 @@ struct PipelineTests {
         ))
 
         do {
-            let _: SampleResponse = try await service.execute(request: SampleRequest())
+            let _: SampleResponse = try await service.execute(SampleRequest())
             Issue.record("debía lanzar .decoding")
         } catch {
             // typed throws: error ya es APIError
@@ -107,8 +107,8 @@ struct PipelineTests {
             response: MockResponse(statusCode: 200, data: Data(#"{"value":7}"#.utf8))
         ))
 
-        let first: SampleResponse = try await service.execute(request: SampleRequest())
-        let second: SampleResponse = try await service.execute(request: SampleRequest())
+        let first: SampleResponse = try await service.execute(SampleRequest())
+        let second: SampleResponse = try await service.execute(SampleRequest())
         #expect(first == second)
 
         let count = MockURLProtocol.recordedRequests.filter { $0.url?.host == "pipe-reuse.test" }.count
@@ -120,7 +120,7 @@ struct PipelineTests {
         let (service, _) = try makeService(host: "pipe-unmatched.test")
 
         do {
-            let _: SampleResponse = try await service.execute(request: SampleRequest())
+            let _: SampleResponse = try await service.execute(SampleRequest())
             Issue.record("debía fallar")
         } catch {
             #expect(error.code == .transport, "esperaba .transport, llegó \(error)")

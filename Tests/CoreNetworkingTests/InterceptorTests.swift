@@ -32,12 +32,12 @@ actor InterceptorSpy: RequestInterceptor {
 @Suite("Interceptores: orden y didFail en todos los caminos")
 struct InterceptorTests {
     private struct GetRequest: BaseRequest {
-        typealias Parameters = EmptyParameters
+        typealias Response = Payload
         let path = "/thing"
-        let method: HTTPMethod = .GET
+        let method: HTTPMethod = .get
     }
 
-    private struct Payload: Decodable { let ok: Bool }
+    private struct Payload: Decodable, Sendable { let ok: Bool }
 
     private func makeService(
         host: String,
@@ -63,7 +63,7 @@ struct InterceptorTests {
             response: MockResponse(statusCode: 200, data: Data(#"{"ok":true}"#.utf8))
         ))
 
-        let _: Payload = try await service.execute(request: GetRequest())
+        let _: Payload = try await service.execute(GetRequest())
 
         #expect(await first.events == ["1.willSend", "1.didReceive"])
         #expect(await second.events == ["2.willSend", "2.didReceive"])
@@ -79,7 +79,7 @@ struct InterceptorTests {
         ))
 
         await #expect(throws: APIError.self) {
-            let _: Payload = try await service.execute(request: GetRequest())
+            let _: Payload = try await service.execute(GetRequest())
         }
 
         let events = await spy.events
@@ -101,7 +101,7 @@ struct InterceptorTests {
         ))
 
         await #expect(throws: APIError.self) {
-            let _: Payload = try await service.execute(request: GetRequest())
+            let _: Payload = try await service.execute(GetRequest())
         }
 
         let events = await spy.events

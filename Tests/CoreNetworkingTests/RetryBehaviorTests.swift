@@ -10,18 +10,18 @@ import CoreNetworkingTestSupport
 @Suite("Retry: comportamiento observable")
 struct RetryBehaviorTests {
     private struct GetRequest: BaseRequest {
-        typealias Parameters = EmptyParameters
+        typealias Response = Payload
         let path = "/resource"
-        let method: HTTPMethod = .GET
+        let method: HTTPMethod = .get
     }
 
     private struct PostRequest: BaseRequest {
-        typealias Parameters = EmptyParameters
+        typealias Response = Payload
         let path = "/resource"
-        let method: HTTPMethod = .POST
+        let method: HTTPMethod = .post
     }
 
-    private struct Payload: Decodable { let ok: Bool }
+    private struct Payload: Decodable, Sendable { let ok: Bool }
 
     private func service(
         host: String,
@@ -51,7 +51,7 @@ struct RetryBehaviorTests {
         ))
 
         await #expect(throws: APIError.self) {
-            let _: Payload = try await service.execute(request: GetRequest())
+            let _: Payload = try await service.execute(GetRequest())
         }
         #expect(requestCount(host: host) == 3)
     }
@@ -68,7 +68,7 @@ struct RetryBehaviorTests {
         ))
 
         await #expect(throws: APIError.self) {
-            let _: Payload = try await service.execute(request: GetRequest())
+            let _: Payload = try await service.execute(GetRequest())
         }
         #expect(requestCount(host: host) == 1)
     }
@@ -78,13 +78,13 @@ struct RetryBehaviorTests {
         let host = "retry-post.test"
         let (service, baseURL) = try service(host: host, maxAttempts: 3)
         MockURLProtocol.register(MockNetworkExchange(
-            method: .POST,
+            method: .post,
             url: baseURL.appendingPathComponent("/resource"),
             response: MockResponse(statusCode: 500)
         ))
 
         await #expect(throws: APIError.self) {
-            let _: Payload = try await service.execute(request: PostRequest())
+            let _: Payload = try await service.execute(PostRequest())
         }
         #expect(requestCount(host: host) == 1)
     }
@@ -92,22 +92,22 @@ struct RetryBehaviorTests {
     @Test("POST con allowsNonIdempotentRetry=true SÍ se reintenta (opt-in)")
     func postOptInRetries() async throws {
         struct OptInPostRequest: BaseRequest {
-            typealias Parameters = EmptyParameters
+            typealias Response = Payload
             let path = "/resource"
-            let method: HTTPMethod = .POST
+            let method: HTTPMethod = .post
             let allowsNonIdempotentRetry = true
         }
 
         let host = "retry-post-optin.test"
         let (service, baseURL) = try service(host: host, maxAttempts: 3)
         MockURLProtocol.register(MockNetworkExchange(
-            method: .POST,
+            method: .post,
             url: baseURL.appendingPathComponent("/resource"),
             response: MockResponse(statusCode: 500)
         ))
 
         await #expect(throws: APIError.self) {
-            let _: Payload = try await service.execute(request: OptInPostRequest())
+            let _: Payload = try await service.execute(OptInPostRequest())
         }
         #expect(requestCount(host: host) == 3)
     }
@@ -125,7 +125,7 @@ struct RetryBehaviorTests {
 
         let start = ContinuousClock.now
         await #expect(throws: APIError.self) {
-            let _: Payload = try await service.execute(request: GetRequest())
+            let _: Payload = try await service.execute(GetRequest())
         }
         let elapsed = start.duration(to: .now)
 
@@ -143,7 +143,7 @@ struct RetryBehaviorTests {
         ))
 
         await #expect(throws: APIError.self) {
-            let _: Payload = try await service.execute(request: GetRequest())
+            let _: Payload = try await service.execute(GetRequest())
         }
         #expect(requestCount(host: host) == 2)
     }

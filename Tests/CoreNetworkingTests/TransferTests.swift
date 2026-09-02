@@ -13,24 +13,23 @@ final class ProgressLog: Sendable {
 
 @Suite("Upload y download por el pipeline compartido")
 struct TransferTests {
-    private struct UploadResult: Decodable, Equatable { let id: Int }
+    private struct UploadResult: Decodable, Sendable, Equatable { let id: Int }
 
     private struct PutUpload: BaseRequest {
-        typealias Parameters = EmptyParameters
+        typealias Response = UploadResult
         let path = "/upload"
-        let method: HTTPMethod = .PUT
+        let method: HTTPMethod = .put
     }
 
     private struct PostUpload: BaseRequest {
-        typealias Parameters = EmptyParameters
+        typealias Response = UploadResult
         let path = "/upload"
-        let method: HTTPMethod = .POST
+        let method: HTTPMethod = .post
     }
 
     private struct DownloadRequest: BaseRequest {
-        typealias Parameters = EmptyParameters
         let path = "/file"
-        let method: HTTPMethod = .GET
+        let method: HTTPMethod = .get
     }
 
     private func makeService(
@@ -52,7 +51,7 @@ struct TransferTests {
         let host = "xfer-upload.test"
         let (service, baseURL) = try makeService(host: host)
         MockURLProtocol.register(MockNetworkExchange(
-            method: .PUT,
+            method: .put,
             url: baseURL.appendingPathComponent("/upload"),
             response: MockResponse(statusCode: 200, data: Data(#"{"id":42}"#.utf8))
         ))
@@ -70,7 +69,7 @@ struct TransferTests {
         let host = "xfer-upload-retry.test"
         let (service, baseURL) = try makeService(host: host, maxAttempts: 2)
         MockURLProtocol.register(MockNetworkExchange(
-            method: .PUT,
+            method: .put,
             url: baseURL.appendingPathComponent("/upload"),
             response: MockResponse(statusCode: 500)
         ))
@@ -86,7 +85,7 @@ struct TransferTests {
         let host = "xfer-upload-post.test"
         let (service, baseURL) = try makeService(host: host, maxAttempts: 3)
         MockURLProtocol.register(MockNetworkExchange(
-            method: .POST,
+            method: .post,
             url: baseURL.appendingPathComponent("/upload"),
             response: MockResponse(statusCode: 500)
         ))

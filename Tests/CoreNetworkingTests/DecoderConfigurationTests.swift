@@ -27,17 +27,17 @@ import CoreNetworkingTestSupport
 struct DecoderConfigurationTests {
     /// `snake_case` en el JSON, camelCase en el tipo y SIN `CodingKeys`: solo
     /// puede funcionar si la estrategia del consumidor llega hasta el decode.
-    private struct PerfilResponse: BaseResponse, Equatable {
+    private struct PerfilResponse: Decodable, Sendable, Equatable {
         let nombreCompleto: String
         let fechaAlta: Date
     }
 
     private struct PerfilRequest: BaseRequest {
-        typealias Parameters = EmptyParameters
+        typealias Response = PerfilResponse
         var path = "/perfil"
-        var method: HTTPMethod = .GET
+        var method: HTTPMethod = .get
         var headers: [String: String] = [:]
-        var queryItems: [URLQueryItem]?
+        var queryItems: [URLQueryItem] = []
     }
 
     private func service(
@@ -67,7 +67,7 @@ struct DecoderConfigurationTests {
             response: MockResponse(statusCode: 200, data: cuerpo)
         ))
 
-        let perfil: PerfilResponse = try await api.execute(request: PerfilRequest())
+        let perfil: PerfilResponse = try await api.execute(PerfilRequest())
 
         #expect(perfil.nombreCompleto == "Ada")
         // La fecha prueba la SEGUNDA estrategia: con el decoder por defecto,
@@ -89,15 +89,15 @@ struct DecoderConfigurationTests {
     /// "cambiarlo para todos", que rompería a cualquiera que ya lo usara.
     @Test("sin configurar nada, el comportamiento por defecto es el de antes")
     func elDefaultSigueSiendoElDecoderDeSiempre() async throws {
-        struct CrudoResponse: BaseResponse, Equatable {
+        struct CrudoResponse: Decodable, Sendable, Equatable {
             let nombre_completo: String   // swiftlint:disable:this identifier_name
         }
         struct CrudoRequest: BaseRequest {
-            typealias Parameters = EmptyParameters
+            typealias Response = CrudoResponse
             var path = "/crudo"
-            var method: HTTPMethod = .GET
+            var method: HTTPMethod = .get
             var headers: [String: String] = [:]
-            var queryItems: [URLQueryItem]?
+            var queryItems: [URLQueryItem] = []
         }
 
         let baseURL = try #require(URL(string: "https://decoder-default.test"))
@@ -111,7 +111,7 @@ struct DecoderConfigurationTests {
             response: MockResponse(statusCode: 200, data: Data(#"{"nombre_completo":"Ada"}"#.utf8))
         ))
 
-        let crudo: CrudoResponse = try await api.execute(request: CrudoRequest())
+        let crudo: CrudoResponse = try await api.execute(CrudoRequest())
         #expect(crudo.nombre_completo == "Ada")
     }
 
@@ -135,8 +135,8 @@ struct DecoderConfigurationTests {
             response: MockResponse(statusCode: 200, data: cuerpo)
         ))
 
-        let _: PerfilResponse = try await api.execute(request: PerfilRequest())
-        let _: PerfilResponse = try await api.execute(request: PerfilRequest())
+        let _: PerfilResponse = try await api.execute(PerfilRequest())
+        let _: PerfilResponse = try await api.execute(PerfilRequest())
 
         #expect(veces.valor == 2)
     }

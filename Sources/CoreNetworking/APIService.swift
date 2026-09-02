@@ -145,10 +145,10 @@ public final class APIService: APIServiceProtocol {
 
     public func upload<Request: BaseRequest>(
         _ request: Request,
-        data uploadData: Data,
+        data: Data,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws(APIError) -> Request.Response {
-        let (data, response, summary) = try await performUpload(request, data: uploadData, progress: progress)
+        let (data, response, summary) = try await performUpload(request, data: data, progress: progress)
         return try Self.decode(
             Request.Response.self,
             from: data,
@@ -160,11 +160,11 @@ public final class APIService: APIServiceProtocol {
 
     public func upload<Request: BaseRequest, Value: Decodable & Sendable>(
         _ request: Request,
-        data uploadData: Data,
+        data: Data,
         as type: Value.Type,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws(APIError) -> Value {
-        let (data, response, summary) = try await performUpload(request, data: uploadData, progress: progress)
+        let (data, response, summary) = try await performUpload(request, data: data, progress: progress)
         return try Self.decode(
             Value.self,
             from: data,
@@ -179,7 +179,7 @@ public final class APIService: APIServiceProtocol {
     /// differs between `Request.Response` and an explicit `as:` type).
     private func performUpload<Request: BaseRequest>(
         _ request: Request,
-        data uploadData: Data,
+        data: Data,
         progress: (@Sendable (Double) -> Void)?
     ) async throws(APIError) -> (data: Data, response: HTTPURLResponse, request: APIError.RequestSummary) {
         try await performWithRetry(request) { [transport] urlRequest in
@@ -188,7 +188,7 @@ public final class APIService: APIServiceProtocol {
             // subida sea fiable (ver su implementación). El progreso, si lo
             // hay, es el único lado (upload) de `TransferProgress`.
             var urlRequest = urlRequest
-            urlRequest.httpBody = uploadData
+            urlRequest.httpBody = data
             let transferProgress = progress.map { TransferProgress(onUpload: $0) }
             return try await transport.send(urlRequest, progress: transferProgress)
         }

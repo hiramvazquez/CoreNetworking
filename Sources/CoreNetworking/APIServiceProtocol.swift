@@ -42,7 +42,7 @@ public protocol APIServiceProtocol: Sendable {
     ///
     /// - Parameters:
     ///   - request: The upload request configuration.
-    ///   - uploadData: Data to upload as the request body.
+    ///   - data: Data to upload as the request body.
     ///   - progress: Closure called with upload progress (0.0 to 1.0).
     /// - Returns: `request`'s declared `Response`, decoded.
     /// - Throws: `APIError` if the upload fails or the response cannot be decoded.
@@ -57,7 +57,7 @@ public protocol APIServiceProtocol: Sendable {
     ///
     /// - Parameters:
     ///   - request: The upload request configuration.
-    ///   - uploadData: Data to upload as the request body.
+    ///   - data: Data to upload as the request body.
     ///   - type: The type to decode instead of `Request.Response`.
     ///   - progress: Closure called with upload progress (0.0 to 1.0).
     /// - Returns: `type`, decoded.

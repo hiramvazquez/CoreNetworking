@@ -94,7 +94,12 @@ public struct MockNetworkExchange: Sendable {
 ///     protocolClasses: [MockURLProtocol.self]
 /// )
 /// ```
-public final class MockURLProtocol: URLProtocol {
+/// `@unchecked Sendable` JUSTIFICADO: `URLProtocol` no es `Sendable` para el compilador,
+/// pero el URL loading system mantiene viva la instancia hasta finish/stopLoading y los
+/// callbacks de `client` son seguros desde cualquier hilo; el único estado mutable propio
+/// (`pendingDelivery`) va bajo `OSAllocatedUnfairLock`. Declarado en la clase (no en una
+/// extensión): el análisis de regiones de `sending` solo lo reconoce así.
+public final class MockURLProtocol: URLProtocol, @unchecked Sendable {
     private struct MatchKey: Hashable, Sendable {
         let method: String
         let url: URL
@@ -108,7 +113,8 @@ public final class MockURLProtocol: URLProtocol {
 
     private static let registry = OSAllocatedUnfairLock(initialState: RegistryState())
 
-    private let pendingDelivery = OSAllocatedUnfairLock<Task<Void, Never>?>(initialState: nil)
+    // `uncheckedState`: `DispatchWorkItem` no es `Sendable`; solo se toca bajo este lock.
+    private let pendingDelivery = OSAllocatedUnfairLock<DispatchWorkItem?>(uncheckedState: nil)
 
     // MARK: Registration API
 
@@ -166,22 +172,24 @@ public final class MockURLProtocol: URLProtocol {
         }
 
         if let latency = exchange.latency {
-            // `self` cruza al Task con la conformidad `@unchecked Sendable` de abajo
-            // (justificada allí). Un `nonisolated(unsafe) let` local ya no basta: los
-            // compiladores más recientes lo tratan como error de `sending`.
-            let task = Task {
-                try? await Task.sleep(for: latency)
-                guard !Task.isCancelled else { return }
+            // `DispatchWorkItem` y no `Task`: el closure de un `Task` es `sending` y el
+            // análisis de regiones rechaza capturar `self` aunque sea `@unchecked Sendable`
+            // (Xcode 26.3 lo reporta como error). Un work item es `@Sendable` y se cancela
+            // igual desde `stopLoading`.
+            let work = DispatchWorkItem { [self] in
                 self.deliver(exchange, response: response)
             }
-            pendingDelivery.withLock { $0 = task }
+            pendingDelivery.withLockUnchecked { $0 = work }
+            let seconds =
+                Double(latency.components.seconds) + Double(latency.components.attoseconds) / 1e18
+            DispatchQueue.global().asyncAfter(deadline: .now() + seconds, execute: work)
         } else {
             deliver(exchange, response: response)
         }
     }
 
     public override func stopLoading() {
-        pendingDelivery.withLock { pending in
+        pendingDelivery.withLockUnchecked { pending in
             pending?.cancel()
             pending = nil
         }
@@ -214,9 +222,3 @@ public final class MockURLProtocol: URLProtocol {
         client?.urlProtocolDidFinishLoading(self)
     }
 }
-
-// `@unchecked Sendable` JUSTIFICADO: `URLProtocol` no es `Sendable` para el compilador,
-// pero el URL loading system mantiene viva la instancia hasta finish/stopLoading y los
-// callbacks de `client` son seguros desde cualquier hilo; el único estado mutable propio
-// (`pendingDelivery`) va bajo `OSAllocatedUnfairLock`.
-extension MockURLProtocol: @unchecked Sendable {}

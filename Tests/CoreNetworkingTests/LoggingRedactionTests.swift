@@ -1,5 +1,6 @@
-import Testing
 import Foundation
+import Testing
+
 @testable import CoreNetworking
 
 @Suite("Logging: redacción de headers sensibles")

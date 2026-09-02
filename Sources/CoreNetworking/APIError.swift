@@ -34,7 +34,6 @@ import Foundation
 /// }
 /// ```
 public struct APIError: Error, Sendable {
-
     // MARK: - Code
 
     /// What went wrong, as an open set.
@@ -248,7 +247,7 @@ public struct APIError: Error, Sendable {
     /// Coarse, closed classification of an `APIError` (see `category`).
     public enum Category: Sendable, Hashable, CaseIterable {
         case offline, timeout, unauthorized, forbidden, notFound, rateLimited, client, server,
-             untrustedServer, cancelled, decoding, unknown
+            untrustedServer, cancelled, decoding, unknown
     }
 
     // MARK: - Body decoding
@@ -374,29 +373,89 @@ extension APIError: LocalizedError {
         let bundle = Bundle.module
         switch category {
         case .offline:
-            return String(localized: "error.offline", defaultValue: "No internet connection.", bundle: bundle, locale: locale)
+            return String(
+                localized: "error.offline",
+                defaultValue: "No internet connection.",
+                bundle: bundle,
+                locale: locale
+            )
         case .timeout:
-            return String(localized: "error.timeout", defaultValue: "The server did not respond in time.", bundle: bundle, locale: locale)
+            return String(
+                localized: "error.timeout",
+                defaultValue: "The server did not respond in time.",
+                bundle: bundle,
+                locale: locale
+            )
         case .unauthorized:
-            return String(localized: "error.unauthorized", defaultValue: "Your session has expired. Please sign in again.", bundle: bundle, locale: locale)
+            return String(
+                localized: "error.unauthorized",
+                defaultValue: "Your session has expired. Please sign in again.",
+                bundle: bundle,
+                locale: locale
+            )
         case .forbidden:
-            return String(localized: "error.forbidden", defaultValue: "You do not have permission to do this.", bundle: bundle, locale: locale)
+            return String(
+                localized: "error.forbidden",
+                defaultValue: "You do not have permission to do this.",
+                bundle: bundle,
+                locale: locale
+            )
         case .notFound:
-            return String(localized: "error.notFound", defaultValue: "The requested resource was not found.", bundle: bundle, locale: locale)
+            return String(
+                localized: "error.notFound",
+                defaultValue: "The requested resource was not found.",
+                bundle: bundle,
+                locale: locale
+            )
         case .rateLimited:
-            return String(localized: "error.rateLimited", defaultValue: "Too many requests. Please try again later.", bundle: bundle, locale: locale)
+            return String(
+                localized: "error.rateLimited",
+                defaultValue: "Too many requests. Please try again later.",
+                bundle: bundle,
+                locale: locale
+            )
         case .client:
-            return String(localized: "error.client", defaultValue: "The request could not be processed (\(statusCode ?? 0)).", bundle: bundle, locale: locale)
+            return String(
+                localized: "error.client",
+                defaultValue: "The request could not be processed (\(statusCode ?? 0)).",
+                bundle: bundle,
+                locale: locale
+            )
         case .server:
-            return String(localized: "error.server", defaultValue: "Server error (\(statusCode ?? 0)).", bundle: bundle, locale: locale)
+            return String(
+                localized: "error.server",
+                defaultValue: "Server error (\(statusCode ?? 0)).",
+                bundle: bundle,
+                locale: locale
+            )
         case .untrustedServer:
-            return String(localized: "error.untrustedServer", defaultValue: "The server's identity could not be verified.", bundle: bundle, locale: locale)
+            return String(
+                localized: "error.untrustedServer",
+                defaultValue: "The server's identity could not be verified.",
+                bundle: bundle,
+                locale: locale
+            )
         case .cancelled:
-            return String(localized: "error.cancelled", defaultValue: "The operation was cancelled.", bundle: bundle, locale: locale)
+            return String(
+                localized: "error.cancelled",
+                defaultValue: "The operation was cancelled.",
+                bundle: bundle,
+                locale: locale
+            )
         case .decoding:
-            return String(localized: "error.decoding", defaultValue: "The server's response could not be read.", bundle: bundle, locale: locale)
+            return String(
+                localized: "error.decoding",
+                defaultValue: "The server's response could not be read.",
+                bundle: bundle,
+                locale: locale
+            )
         case .unknown:
-            return String(localized: "error.unknown", defaultValue: "Something went wrong. Please try again.", bundle: bundle, locale: locale)
+            return String(
+                localized: "error.unknown",
+                defaultValue: "Something went wrong. Please try again.",
+                bundle: bundle,
+                locale: locale
+            )
         }
     }
 }

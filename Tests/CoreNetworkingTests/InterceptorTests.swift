@@ -1,7 +1,8 @@
-import Testing
-import Foundation
-@testable import CoreNetworking
 import CoreNetworkingTestSupport
+import Foundation
+import Testing
+
+@testable import CoreNetworking
 
 /// Spy que graba los eventos del pipeline en orden, con etiquetas legibles.
 /// (Para asertar `context.id`/`context.attempt` usa `RecordingInterceptor`
@@ -50,7 +51,12 @@ struct InterceptorTests {
         retryPolicy: RetryPolicy = .noRetry
     ) -> APIService {
         let configuration = NetworkingConfiguration(baseURL: baseURL)
-        return APIService(configuration: configuration, transport: transport, retryPolicy: retryPolicy, interceptors: interceptors)
+        return APIService(
+            configuration: configuration,
+            transport: transport,
+            retryPolicy: retryPolicy,
+            interceptors: interceptors
+        )
     }
 
     @Test("orden: willSend 1→2, didReceive 1→2 en éxito")
@@ -58,10 +64,12 @@ struct InterceptorTests {
         let first = InterceptorSpy(label: "1")
         let second = InterceptorSpy(label: "2")
         let transport = InMemoryTransport()
-        await transport.register(InMemoryTransport.Exchange(
-            url: thingURL,
-            response: .response(status: 200, body: Data(#"{"ok":true}"#.utf8))
-        ))
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: thingURL,
+                response: .response(status: 200, body: Data(#"{"ok":true}"#.utf8))
+            )
+        )
         let service = makeService(transport: transport, interceptors: [first, second])
 
         let _: Payload = try await service.execute(GetRequest())
@@ -82,8 +90,10 @@ struct InterceptorTests {
         }
 
         let events = await spy.events
-        #expect(events.contains("s.didFail(code: httpStatus, status: 503)"),
-                "didFail no se notificó para el error de status — eventos: \(events)")
+        #expect(
+            events.contains("s.didFail(code: httpStatus, status: 503)"),
+            "didFail no se notificó para el error de status — eventos: \(events)"
+        )
         // didReceive también se llamó (la respuesta llegó): ambos son parte del contrato.
         #expect(events.first == "s.willSend")
         #expect(events.contains("s.didReceive"))
@@ -101,8 +111,10 @@ struct InterceptorTests {
         }
 
         let events = await spy.events
-        #expect(events.contains("s.didFail(code: transport, status: -)"),
-                "didFail no se notificó para el error de transporte — eventos: \(events)")
+        #expect(
+            events.contains("s.didFail(code: transport, status: -)"),
+            "didFail no se notificó para el error de transporte — eventos: \(events)"
+        )
     }
 
     @Test("willSend que lanza: el transporte no recibe nada, code == .interceptor, didFail una sola vez")
@@ -111,10 +123,12 @@ struct InterceptorTests {
         let thrown = APIError(code: .encoding, underlying: BoomError())
         let recorder = RecordingInterceptor(willSendThrows: thrown)
         let transport = InMemoryTransport()
-        await transport.register(InMemoryTransport.Exchange(
-            url: thingURL,
-            response: .response(status: 200, body: Data(#"{"ok":true}"#.utf8))
-        ))
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: thingURL,
+                response: .response(status: 200, body: Data(#"{"ok":true}"#.utf8))
+            )
+        )
         let service = makeService(transport: transport, interceptors: [recorder])
 
         do {
@@ -137,17 +151,25 @@ struct InterceptorTests {
     func contextIdentityAcrossRetries() async throws {
         let recorder = RecordingInterceptor()
         let transport = InMemoryTransport()
-        await transport.register(InMemoryTransport.Exchange(
-            url: thingURL,
-            responses: [
-                .response(status: 500),
-                .response(status: 500),
-                .response(status: 200, body: Data(#"{"ok":true}"#.utf8))
-            ]
-        ))
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: thingURL,
+                responses: [
+                    .response(status: 500),
+                    .response(status: 500),
+                    .response(status: 200, body: Data(#"{"ok":true}"#.utf8))
+                ]
+            )
+        )
         let clock = ManualClock()
         let policy = RetryPolicy(maxAttempts: 3, initialDelay: .milliseconds(1), maxDelay: .milliseconds(10))
-        let service = APIService(configuration: NetworkingConfiguration(baseURL: baseURL), transport: transport, retryPolicy: policy, interceptors: [recorder], clock: clock)
+        let service = APIService(
+            configuration: NetworkingConfiguration(baseURL: baseURL),
+            transport: transport,
+            retryPolicy: policy,
+            interceptors: [recorder],
+            clock: clock
+        )
 
         let task = Task { () async throws(APIError) -> Payload in
             try await service.execute(GetRequest())

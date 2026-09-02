@@ -1,7 +1,8 @@
-import Testing
-import Foundation
-@testable import CoreNetworking
 import CoreNetworkingTestSupport
+import Foundation
+import Testing
+
+@testable import CoreNetworking
 
 /// Transporte de prueba que decide el status según el header `Authorization`
 /// del request — a diferencia de `InMemoryTransport` (secuencia fija por
@@ -30,7 +31,11 @@ private actor HeaderGatedTransport: HTTPTransport {
         return (body, response)
     }
 
-    func download(_ request: URLRequest, to destination: URL, progress: TransferProgress?) async throws -> HTTPURLResponse {
+    func download(
+        _ request: URLRequest,
+        to destination: URL,
+        progress: TransferProgress?
+    ) async throws -> HTTPURLResponse {
         let (data, response) = try await send(request, progress: progress)
         try data.write(to: destination, options: .atomic)
         return response
@@ -94,7 +99,10 @@ struct RetrierTests {
         let payload = try await task.value
 
         #expect(payload.ok == true)
-        #expect(await transport.requestCount == 2, "EXACTAMENTE 2 requests: el 401 original y el reintento tras el refresh")
+        #expect(
+            await transport.requestCount == 2,
+            "EXACTAMENTE 2 requests: el 401 original y el reintento tras el refresh"
+        )
     }
 
     @Test("10 requests concurrentes con 401 → un ÚNICO refresh")
@@ -194,13 +202,15 @@ struct RetrierTests {
         }
 
         let transport = InMemoryTransport()
-        await transport.register(InMemoryTransport.Exchange(
-            url: resourceURL,
-            responses: [
-                .response(status: 503, headers: ["Retry-After": "1"]),
-                .response(status: 200, body: Data(#"{"ok":true}"#.utf8))
-            ]
-        ))
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: resourceURL,
+                responses: [
+                    .response(status: 503, headers: ["Retry-After": "1"]),
+                    .response(status: 200, body: Data(#"{"ok":true}"#.utf8))
+                ]
+            )
+        )
         let clock = ManualClock()
         // backoff configurado ENORME (1h) y Retry-After del servidor (1s):
         // si el delay pedido al reloj es el que fija el retrier (2s exactos),
@@ -220,7 +230,10 @@ struct RetrierTests {
         await clock.waitUntilSleeping()
         let deadline = try #require(clock.pendingDeadlines.first)
         let requestedDelay = clock.now.duration(to: deadline)
-        #expect(requestedDelay == .seconds(2), "debía usar RetryDecision.retryAfter (2s), no Retry-After (1s) ni el backoff (1h)")
+        #expect(
+            requestedDelay == .seconds(2),
+            "debía usar RetryDecision.retryAfter (2s), no Retry-After (1s) ni el backoff (1h)"
+        )
         clock.advance(by: requestedDelay)
 
         let payload = try await task.value
@@ -255,7 +268,10 @@ struct RetrierTests {
         await #expect(throws: APIError.self) {
             _ = try await task.value
         }
-        #expect(await transport.recorded.count == 3, "3 intentos TOTAL como mucho, aunque el retrier siempre pida .retry")
+        #expect(
+            await transport.recorded.count == 3,
+            "3 intentos TOTAL como mucho, aunque el retrier siempre pida .retry"
+        )
     }
 
     @Test("el primer retrier que no devuelve .doNotRetry decide; los siguientes no se consultan")
@@ -276,10 +292,12 @@ struct RetrierTests {
 
         let log = CallLog()
         let transport = InMemoryTransport()
-        await transport.register(InMemoryTransport.Exchange(
-            url: resourceURL,
-            responses: [.response(status: 500), .response(status: 200, body: Data(#"{"ok":true}"#.utf8))]
-        ))
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: resourceURL,
+                responses: [.response(status: 500), .response(status: 200, body: Data(#"{"ok":true}"#.utf8))]
+            )
+        )
         let clock = ManualClock()
         let policy = RetryPolicy(maxAttempts: 2, initialDelay: .milliseconds(1), maxDelay: .milliseconds(10))
         let service = APIService(

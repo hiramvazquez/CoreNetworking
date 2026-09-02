@@ -109,7 +109,8 @@ public struct NetworkingConfiguration: Sendable {
         protocolClasses: [URLProtocol.Type]? = nil,
         makeDecoder: @escaping @Sendable () -> JSONDecoder = { JSONDecoder() },
         makeEncoder: @escaping @Sendable () -> JSONEncoder = { JSONEncoder() },
-        sessionConfiguration: @escaping @Sendable () -> URLSessionConfiguration = NetworkingConfiguration.defaultSessionConfiguration
+        sessionConfiguration: @escaping @Sendable () -> URLSessionConfiguration = NetworkingConfiguration
+            .defaultSessionConfiguration
     ) {
         precondition(
             baseURL.scheme != nil && baseURL.host != nil,

@@ -1,6 +1,6 @@
+import CryptoKit
 import Foundation
 import Security
-import CryptoKit
 
 // MARK: - Validation Result
 

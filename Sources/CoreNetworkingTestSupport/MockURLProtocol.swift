@@ -1,5 +1,5 @@
-import Foundation
 import CoreNetworking
+import Foundation
 import os
 
 // MARK: - MockResponse
@@ -198,12 +198,14 @@ public final class MockURLProtocol: URLProtocol {
             return
         }
 
-        guard let httpResponse = HTTPURLResponse(
-            url: exchange.url,
-            statusCode: response.statusCode,
-            httpVersion: "HTTP/1.1",
-            headerFields: response.headers
-        ) else {
+        guard
+            let httpResponse = HTTPURLResponse(
+                url: exchange.url,
+                statusCode: response.statusCode,
+                httpVersion: "HTTP/1.1",
+                headerFields: response.headers
+            )
+        else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
             return
         }

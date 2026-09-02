@@ -45,7 +45,9 @@ public struct PinningFailure: Error, Sendable {
 /// los bytes recibidos, si ya se movió el fichero) vive bajo
 /// `OSAllocatedUnfairLock`; `URLSession` invoca estos callbacks desde su
 /// propia cola serial, nunca concurrentemente entre sí para la misma tarea.
-final class TaskDelegate: NSObject, URLSessionTaskDelegate, URLSessionDataDelegate, URLSessionDownloadDelegate, @unchecked Sendable {
+final class TaskDelegate: NSObject, URLSessionTaskDelegate, URLSessionDataDelegate, URLSessionDownloadDelegate,
+    @unchecked Sendable
+{
     private struct State {
         var pinningFailed = false
         var bytesReceived: Int64 = 0
@@ -96,8 +98,9 @@ final class TaskDelegate: NSObject, URLSessionTaskDelegate, URLSessionDataDelega
         // Solo tratamos server-trust; cualquier otro challenge (Basic, NTLM,
         // certificado cliente) va al sistema.
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              let serverTrust = challenge.protectionSpace.serverTrust,
-              let pinning else {
+            let serverTrust = challenge.protectionSpace.serverTrust,
+            let pinning
+        else {
             completionHandler(.performDefaultHandling, nil)
             return
         }

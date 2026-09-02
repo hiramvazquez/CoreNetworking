@@ -1,7 +1,8 @@
-import Testing
-import Foundation
-@testable import CoreNetworking
 import CoreNetworkingTestSupport
+import Foundation
+import Testing
+
+@testable import CoreNetworking
 
 /// El mapeo de extremo a extremo que arregla CN-01: un fallo de pinning tiene
 /// que llegar a la app como `APIError(code: .untrustedServer)`, nunca como
@@ -36,7 +37,6 @@ import CoreNetworkingTestSupport
 /// `APIService` → `APIError`.
 @Suite("Pinning de extremo a extremo: CN-01, la cancelación que no es cancelación")
 struct PinningPipelineTests {
-
     // MARK: - 1. `URLSessionTransport.remapPinningCancellation` (función pura)
 
     @Test("URLError(.cancelled) CON pinningFailed → PinningFailure")
@@ -95,10 +95,12 @@ struct PinningPipelineTests {
     @Test("execute: PinningFailure del transporte → code == .untrustedServer, category == .untrustedServer")
     func executeMapsPinningFailureToUntrustedServer() async throws {
         let transport = InMemoryTransport()
-        await transport.register(InMemoryTransport.Exchange(
-            url: URL(string: "https://unit.test/resource")!,
-            response: .pinningFailure(host: "unit.test")
-        ))
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: URL(string: "https://unit.test/resource")!,
+                response: .pinningFailure(host: "unit.test")
+            )
+        )
         let service = makeService(transport: transport)
 
         do {
@@ -114,10 +116,12 @@ struct PinningPipelineTests {
     @Test("execute: un URLError(.cancelled) normal (sin pinning) → code == .cancelled")
     func executeMapsPlainCancellationToCancelled() async throws {
         let transport = InMemoryTransport()
-        await transport.register(InMemoryTransport.Exchange(
-            url: URL(string: "https://unit.test/resource")!,
-            response: .failure(URLError(.cancelled))
-        ))
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: URL(string: "https://unit.test/resource")!,
+                response: .failure(URLError(.cancelled))
+            )
+        )
         let service = makeService(transport: transport)
 
         do {
@@ -133,10 +137,12 @@ struct PinningPipelineTests {
     @Test("data(for:): PinningFailure del transporte → .untrustedServer")
     func dataForMapsPinningFailureToUntrustedServer() async throws {
         let transport = InMemoryTransport()
-        await transport.register(InMemoryTransport.Exchange(
-            url: URL(string: "https://unit.test/resource")!,
-            response: .pinningFailure(host: "unit.test")
-        ))
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: URL(string: "https://unit.test/resource")!,
+                response: .pinningFailure(host: "unit.test")
+            )
+        )
         let service = makeService(transport: transport)
 
         do {
@@ -151,10 +157,12 @@ struct PinningPipelineTests {
     @Test("download(to:): PinningFailure del transporte → .untrustedServer, sin fichero en destination")
     func downloadToDiskMapsPinningFailureToUntrustedServer() async throws {
         let transport = InMemoryTransport()
-        await transport.register(InMemoryTransport.Exchange(
-            url: URL(string: "https://unit.test/resource")!,
-            response: .pinningFailure(host: "unit.test")
-        ))
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: URL(string: "https://unit.test/resource")!,
+                response: .pinningFailure(host: "unit.test")
+            )
+        )
         let service = makeService(transport: transport)
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("cn04-pinning-\(UUID().uuidString).bin")
@@ -173,10 +181,12 @@ struct PinningPipelineTests {
     @Test("download(to:): un URLError(.cancelled) normal (sin pinning) → .cancelled")
     func downloadToDiskMapsPlainCancellationToCancelled() async throws {
         let transport = InMemoryTransport()
-        await transport.register(InMemoryTransport.Exchange(
-            url: URL(string: "https://unit.test/resource")!,
-            response: .failure(URLError(.cancelled))
-        ))
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: URL(string: "https://unit.test/resource")!,
+                response: .failure(URLError(.cancelled))
+            )
+        )
         let service = makeService(transport: transport)
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("cn04-cancel-\(UUID().uuidString).bin")

@@ -1,13 +1,13 @@
-import Testing
-import Foundation
-@testable import CoreNetworking
 import CoreNetworkingTestSupport
+import Foundation
+import Testing
+
+@testable import CoreNetworking
 
 /// Cobertura de `APIError`: el struct único y extensible que sustituye al
 /// enum cerrado + `TransportError` (CN-01). Ver `AUDITORIA-2026-09-01.md` §4.
 @Suite("APIError: decodeBody, category, isRetryable, LocalizedError")
 struct APIErrorTests {
-
     // MARK: - decodeBody: la app decodifica SU sobre de error
 
     private struct FieldError: Decodable, Equatable { let field: String }
@@ -130,7 +130,10 @@ struct APIErrorTests {
     func unauthorizedIsNotForbidden() {
         #expect(APIError.stub(code: .httpStatus, statusCode: 401).category == .unauthorized)
         #expect(APIError.stub(code: .httpStatus, statusCode: 403).category == .forbidden)
-        #expect(APIError.stub(code: .httpStatus, statusCode: 401).category != APIError.stub(code: .httpStatus, statusCode: 403).category)
+        #expect(
+            APIError.stub(code: .httpStatus, statusCode: 401).category
+                != APIError.stub(code: .httpStatus, statusCode: 403).category
+        )
     }
 
     // MARK: - isRetryable
@@ -243,7 +246,8 @@ struct APIErrorTests {
         let error = APIError(code: .transport, underlying: URLError(.notConnectedToInternet))
         let expected = "No internet connection."
         let description =
-            Self.compiledBundle(for: "en")?.localizedString(forKey: "error.offline", value: expected, table: "Localizable")
+            Self.compiledBundle(for: "en")?
+            .localizedString(forKey: "error.offline", value: expected, table: "Localizable")
             ?? error.errorDescription(locale: Locale(identifier: "en"))
         #expect(description == expected)
         #expect(!description.lowercased().contains("error 9"))
@@ -257,11 +261,12 @@ struct APIErrorTests {
         )
     )
     func localizedDescriptionSpanish() {
-        let description = Self.compiledBundle(for: "es")!.localizedString(
-            forKey: "error.offline",
-            value: "No internet connection.",
-            table: "Localizable"
-        )
+        let description = Self.compiledBundle(for: "es")!
+            .localizedString(
+                forKey: "error.offline",
+                value: "No internet connection.",
+                table: "Localizable"
+            )
         #expect(description == "No hay conexión a internet.")
     }
 

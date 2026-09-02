@@ -1,5 +1,6 @@
-import Testing
 import Foundation
+import Testing
+
 @testable import CoreNetworking
 
 @Suite("RetryPolicy: matemática del backoff (Duration)")
@@ -10,13 +11,18 @@ struct RetryPolicyTests {
         #expect(policy.baseDelay(for: 0) == .seconds(1))
         #expect(policy.baseDelay(for: 1) == .seconds(2))
         #expect(policy.baseDelay(for: 2) == .seconds(4))
-        #expect(policy.baseDelay(for: 3) == .seconds(5)) // capped
+        #expect(policy.baseDelay(for: 3) == .seconds(5))  // capped
         #expect(policy.baseDelay(for: 10) == .seconds(5))
     }
 
     @Test("jitter acotado: delay ∈ [base/2, base] para todos los intentos (property)")
     func jitterBounds() {
-        let policy = RetryPolicy(maxAttempts: 5, initialDelay: .milliseconds(500), maxDelay: .seconds(16), multiplier: 2.0)
+        let policy = RetryPolicy(
+            maxAttempts: 5,
+            initialDelay: .milliseconds(500),
+            maxDelay: .seconds(16),
+            multiplier: 2.0
+        )
         var generator = SystemRandomNumberGenerator()
         for attempt in 0..<8 {
             let base = policy.baseDelay(for: attempt)

@@ -1,7 +1,8 @@
-import Testing
-import Foundation
-@testable import CoreNetworking
 import CoreNetworkingTestSupport
+import Foundation
+import Testing
+
+@testable import CoreNetworking
 
 /// Tests de comportamiento del retry: `InMemoryTransport` (sin `URLSession`,
 /// sin registro global) + `ManualClock` (sin dormir de verdad — ver
@@ -88,7 +89,9 @@ struct RetryBehaviorTests {
     @Test("POST NO se reintenta por defecto (no idempotente, A4)")
     func postIsNotRetriedByDefault() async throws {
         let transport = InMemoryTransport()
-        await transport.register(InMemoryTransport.Exchange(method: .post, url: resourceURL, response: .response(status: 500)))
+        await transport.register(
+            InMemoryTransport.Exchange(method: .post, url: resourceURL, response: .response(status: 500))
+        )
         let clock = ManualClock()
         let apiService = service(transport: transport, clock: clock, maxAttempts: 3)
 
@@ -108,7 +111,9 @@ struct RetryBehaviorTests {
         }
 
         let transport = InMemoryTransport()
-        await transport.register(InMemoryTransport.Exchange(method: .post, url: resourceURL, response: .response(status: 500)))
+        await transport.register(
+            InMemoryTransport.Exchange(method: .post, url: resourceURL, response: .response(status: 500))
+        )
         let clock = ManualClock()
         let apiService = service(transport: transport, clock: clock, maxAttempts: 3)
 
@@ -129,13 +134,15 @@ struct RetryBehaviorTests {
     @Test("Retry-After del servidor manda sobre el backoff configurado")
     func retryAfterOverridesBackoff() async throws {
         let transport = InMemoryTransport()
-        await transport.register(InMemoryTransport.Exchange(
-            url: resourceURL,
-            // "1", no "0": un delay de CERO resuelve `clock.sleep` de forma
-            // síncrona (nunca llega a registrarse como pendiente) y este test
-            // no podría distinguirlo del backoff sin esperar de verdad.
-            response: .response(status: 503, headers: ["Retry-After": "1"])
-        ))
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: resourceURL,
+                // "1", no "0": un delay de CERO resuelve `clock.sleep` de forma
+                // síncrona (nunca llega a registrarse como pendiente) y este test
+                // no podría distinguirlo del backoff sin esperar de verdad.
+                response: .response(status: 503, headers: ["Retry-After": "1"])
+            )
+        )
         let clock = ManualClock()
         // Backoff configurado ENORME: si el delay pedido a `clock` es ~1s en
         // vez de este backoff, es porque se respetó el Retry-After.
@@ -172,14 +179,16 @@ struct RetryBehaviorTests {
     @Test("500, 500, 200 → éxito con EXACTAMENTE 3 requests (secuencia en InMemoryTransport)")
     func retriesThroughFailureSequenceThenSucceeds() async throws {
         let transport = InMemoryTransport()
-        await transport.register(InMemoryTransport.Exchange(
-            url: resourceURL,
-            responses: [
-                .response(status: 500),
-                .response(status: 500),
-                .response(status: 200, body: Data(#"{"ok":true}"#.utf8))
-            ]
-        ))
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: resourceURL,
+                responses: [
+                    .response(status: 500),
+                    .response(status: 500),
+                    .response(status: 200, body: Data(#"{"ok":true}"#.utf8))
+                ]
+            )
+        )
         let clock = ManualClock()
         let apiService = service(transport: transport, clock: clock, maxAttempts: 3)
 

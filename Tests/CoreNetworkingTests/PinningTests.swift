@@ -1,6 +1,7 @@
-import Testing
 import Foundation
 import Security
+import Testing
+
 @testable import CoreNetworking
 
 // MARK: - SPKI hashing contra vectores de openssl
@@ -36,7 +37,8 @@ struct SPKIHashingTests {
     @Test("EC P-384")
     func ecP384() throws {
         let key = try makeKey(
-            base64: "BLSlomqxmlJub9BS0EG0lup0+4E0SF0l8VOsJVCvVTxk+3qGJ8c5Q6WohgBica/HvNTvtczxKyr/MphDn61oU3ks8bjqONknUa12hr3GhOlmAmywQAbWkV00bEMDc5ibYw==",
+            base64:
+                "BLSlomqxmlJub9BS0EG0lup0+4E0SF0l8VOsJVCvVTxk+3qGJ8c5Q6WohgBica/HvNTvtczxKyr/MphDn61oU3ks8bjqONknUa12hr3GhOlmAmywQAbWkV00bEMDc5ibYw==",
             type: kSecAttrKeyTypeECSECPrimeRandom
         )
         #expect(SPKIHasher.sha256Base64(of: key) == "ea+LL2VjfxBUj0Soz1SvGai2tzppLoSGedlK3A6ch9I=")
@@ -45,7 +47,8 @@ struct SPKIHashingTests {
     @Test("RSA 2048")
     func rsa2048() throws {
         let key = try makeKey(
-            base64: "MIIBCgKCAQEAxs9doKvzSpIzhCPMKr2+zIsPTaMooVDBcQGc5VjVyEdJRMu3a4zbAnH8xQKud3MqfK9snEJEJ/myYhFA7UpgFqBdow1i+HD0jHKiW89zE3poGueoWjrfSjbUqjhThrroHN2nnKwN4YcLk/1+oVaDvGhT3eAkubXycB789hP5Tk7LvdWHKr1J6hYWdtx2T0EtCJTi2jtYWU3lzgae6oO8TbdpLgL0DyeOCOd5Rs5w6jXjqs2mfJ8LKRY/m0rz6xaupvUgTgpm9ev1GIySRrURGaatdNH3pUMyOnUkx8HZrTLUqQUTZjq8arrE4hXYcZLg2sjaXqD9l/74oZhFwglljQIDAQAB",
+            base64:
+                "MIIBCgKCAQEAxs9doKvzSpIzhCPMKr2+zIsPTaMooVDBcQGc5VjVyEdJRMu3a4zbAnH8xQKud3MqfK9snEJEJ/myYhFA7UpgFqBdow1i+HD0jHKiW89zE3poGueoWjrfSjbUqjhThrroHN2nnKwN4YcLk/1+oVaDvGhT3eAkubXycB789hP5Tk7LvdWHKr1J6hYWdtx2T0EtCJTi2jtYWU3lzgae6oO8TbdpLgL0DyeOCOd5Rs5w6jXjqs2mfJ8LKRY/m0rz6xaupvUgTgpm9ev1GIySRrURGaatdNH3pUMyOnUkx8HZrTLUqQUTZjq8arrE4hXYcZLg2sjaXqD9l/74oZhFwglljQIDAQAB",
             type: kSecAttrKeyTypeRSA
         )
         #expect(SPKIHasher.sha256Base64(of: key) == "MnB3l1Lb2umgpJJ/9Y2dGQrrGOp3chVvOZczYCKVfTM=")
@@ -84,37 +87,38 @@ struct SPKIHashingTests {
     private static let rsa3072Pin = "7MPw/Epx+blaKme8hPiycvozIV++UBXmB7RAmkFB4TA="
 
     private static let rsa3072PKCS1 = """
-    MIIBigKCAYEAzDlHYFq1JzXKxN6eucKGu8bQf6ej+IGXNhxJgUN8EmcDPsPHv5dtZAjtPFN6Uh08BYGtkxWq7pY9ZGHCBWhBYK0m\
-    2byPm5BwsqcbX4473fNwuyIiW1XXptyOmWcyoWdFuCkwazTsu2tK9geLOcH/eFqCmcnRoEuFtkRVhpo3IU9pdeMrRY0mAfaC4B/2\
-    bUbN14qRCnNvnbrW94QEzSxe/wX5KYNPEORIjWjIZ3v+nA3GCNKecF3iSGLMP5TphEQ5nkAzR3o3ELY+941axX8HmbOW7JiJnKmG\
-    Ev8Bl4/ZKthljcOeRm+gQyjCopIwI9RFkPHWogabWHW2cIrAdwwmo5iIzBLX/Vhr9FcwRfcd7c+IgT2AnNLd7hUs5ghhAY0vXEdh\
-    CsYMrD+B+Z9Xn2JgiZ0R0hm0qgoRdRMTowfVWY3G8DRIzTy2V5O5g7HwDRRRuRmR4d11bcL4HXq31NV15yPS84tWCsjbteQ8Xcjy\
-    yHnGpupmcEb22ac5hasICCKxAgMBAAE=
-    """
+        MIIBigKCAYEAzDlHYFq1JzXKxN6eucKGu8bQf6ej+IGXNhxJgUN8EmcDPsPHv5dtZAjtPFN6Uh08BYGtkxWq7pY9ZGHCBWhBYK0m\
+        2byPm5BwsqcbX4473fNwuyIiW1XXptyOmWcyoWdFuCkwazTsu2tK9geLOcH/eFqCmcnRoEuFtkRVhpo3IU9pdeMrRY0mAfaC4B/2\
+        bUbN14qRCnNvnbrW94QEzSxe/wX5KYNPEORIjWjIZ3v+nA3GCNKecF3iSGLMP5TphEQ5nkAzR3o3ELY+941axX8HmbOW7JiJnKmG\
+        Ev8Bl4/ZKthljcOeRm+gQyjCopIwI9RFkPHWogabWHW2cIrAdwwmo5iIzBLX/Vhr9FcwRfcd7c+IgT2AnNLd7hUs5ghhAY0vXEdh\
+        CsYMrD+B+Z9Xn2JgiZ0R0hm0qgoRdRMTowfVWY3G8DRIzTy2V5O5g7HwDRRRuRmR4d11bcL4HXq31NV15yPS84tWCsjbteQ8Xcjy\
+        yHnGpupmcEb22ac5hasICCKxAgMBAAE=
+        """
 
     /// Certificado autofirmado de juguete (clave PÚBLICA, no protege nada):
     /// `openssl x509 -in c.pem -outform DER | base64`
     private static let rsa3072CertificateDER = """
-    MIIEDzCCAnegAwIBAgIUG5cXkd7w93lWcp4QNV1Q++qhy8YwDQYJKoZIhvcNAQELBQAwFzEVMBMGA1UEAwwMcGlubmluZy50ZXN0\
-    MB4XDTI2MDkwMjAyMzYxMFoXDTM2MDgzMDAyMzYxMFowFzEVMBMGA1UEAwwMcGlubmluZy50ZXN0MIIBojANBgkqhkiG9w0BAQEF\
-    AAOCAY8AMIIBigKCAYEAzDlHYFq1JzXKxN6eucKGu8bQf6ej+IGXNhxJgUN8EmcDPsPHv5dtZAjtPFN6Uh08BYGtkxWq7pY9ZGHC\
-    BWhBYK0m2byPm5BwsqcbX4473fNwuyIiW1XXptyOmWcyoWdFuCkwazTsu2tK9geLOcH/eFqCmcnRoEuFtkRVhpo3IU9pdeMrRY0m\
-    AfaC4B/2bUbN14qRCnNvnbrW94QEzSxe/wX5KYNPEORIjWjIZ3v+nA3GCNKecF3iSGLMP5TphEQ5nkAzR3o3ELY+941axX8HmbOW\
-    7JiJnKmGEv8Bl4/ZKthljcOeRm+gQyjCopIwI9RFkPHWogabWHW2cIrAdwwmo5iIzBLX/Vhr9FcwRfcd7c+IgT2AnNLd7hUs5ghh\
-    AY0vXEdhCsYMrD+B+Z9Xn2JgiZ0R0hm0qgoRdRMTowfVWY3G8DRIzTy2V5O5g7HwDRRRuRmR4d11bcL4HXq31NV15yPS84tWCsjb\
-    teQ8XcjyyHnGpupmcEb22ac5hasICCKxAgMBAAGjUzBRMB0GA1UdDgQWBBT/hLPDApTPWLaG6Lhw9jNz0RKUUjAfBgNVHSMEGDAW\
-    gBT/hLPDApTPWLaG6Lhw9jNz0RKUUjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBgQBfTdbNFSsEUA6DTlUuDoZn\
-    14J6H9tAwAVSppHhEIGqYMm9rOn7d456pGRzCKgoiv2wamHl+/xqumpWGEGWSb5qiL1e2vYrANpGniD+tkOgn47k3Jtmn4e50Vez\
-    4ztmq1H8YZjSKPpGjc5qbzO6BAOUW9uAXoIFfgtnBsSQMyEhRa6pWn8XQpeCL+lc1G2RYuu3R/TK3EMINDRJhjfjNjvGkX3taNU1\
-    BpWSuAAveVYEoV7GMe2LJWqowRm/IoTjF0lVqSPVnE3kR+FDKH+MclYf5BRZmSNAKPo/oCJU2yKa0zq8ye0h27G6XIL4WK+PyX1u\
-    L2f55/voxg+WtNeI9Lcm5pCyepyddsGGLPShP/RENFpupu9ql8WShnQG6tcCqr1qXjNc7YYx49ms/1Lz6O9THtb0lqXiMiBcfqj8\
-    ZJ+vDk295gOSEsdHMpDtyzU7BaTkdJZO3eCvDfnwaKLk1Pa5gggyB5ca53sS7wcwefJaEF3N4dtDveScENYry0tLg0Q=
-    """
+        MIIEDzCCAnegAwIBAgIUG5cXkd7w93lWcp4QNV1Q++qhy8YwDQYJKoZIhvcNAQELBQAwFzEVMBMGA1UEAwwMcGlubmluZy50ZXN0\
+        MB4XDTI2MDkwMjAyMzYxMFoXDTM2MDgzMDAyMzYxMFowFzEVMBMGA1UEAwwMcGlubmluZy50ZXN0MIIBojANBgkqhkiG9w0BAQEF\
+        AAOCAY8AMIIBigKCAYEAzDlHYFq1JzXKxN6eucKGu8bQf6ej+IGXNhxJgUN8EmcDPsPHv5dtZAjtPFN6Uh08BYGtkxWq7pY9ZGHC\
+        BWhBYK0m2byPm5BwsqcbX4473fNwuyIiW1XXptyOmWcyoWdFuCkwazTsu2tK9geLOcH/eFqCmcnRoEuFtkRVhpo3IU9pdeMrRY0m\
+        AfaC4B/2bUbN14qRCnNvnbrW94QEzSxe/wX5KYNPEORIjWjIZ3v+nA3GCNKecF3iSGLMP5TphEQ5nkAzR3o3ELY+941axX8HmbOW\
+        7JiJnKmGEv8Bl4/ZKthljcOeRm+gQyjCopIwI9RFkPHWogabWHW2cIrAdwwmo5iIzBLX/Vhr9FcwRfcd7c+IgT2AnNLd7hUs5ghh\
+        AY0vXEdhCsYMrD+B+Z9Xn2JgiZ0R0hm0qgoRdRMTowfVWY3G8DRIzTy2V5O5g7HwDRRRuRmR4d11bcL4HXq31NV15yPS84tWCsjb\
+        teQ8XcjyyHnGpupmcEb22ac5hasICCKxAgMBAAGjUzBRMB0GA1UdDgQWBBT/hLPDApTPWLaG6Lhw9jNz0RKUUjAfBgNVHSMEGDAW\
+        gBT/hLPDApTPWLaG6Lhw9jNz0RKUUjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBgQBfTdbNFSsEUA6DTlUuDoZn\
+        14J6H9tAwAVSppHhEIGqYMm9rOn7d456pGRzCKgoiv2wamHl+/xqumpWGEGWSb5qiL1e2vYrANpGniD+tkOgn47k3Jtmn4e50Vez\
+        4ztmq1H8YZjSKPpGjc5qbzO6BAOUW9uAXoIFfgtnBsSQMyEhRa6pWn8XQpeCL+lc1G2RYuu3R/TK3EMINDRJhjfjNjvGkX3taNU1\
+        BpWSuAAveVYEoV7GMe2LJWqowRm/IoTjF0lVqSPVnE3kR+FDKH+MclYf5BRZmSNAKPo/oCJU2yKa0zq8ye0h27G6XIL4WK+PyX1u\
+        L2f55/voxg+WtNeI9Lcm5pCyepyddsGGLPShP/RENFpupu9ql8WShnQG6tcCqr1qXjNc7YYx49ms/1Lz6O9THtb0lqXiMiBcfqj8\
+        ZJ+vDk295gOSEsdHMpDtyzU7BaTkdJZO3eCvDfnwaKLk1Pa5gggyB5ca53sS7wcwefJaEF3N4dtDveScENYry0tLg0Q=
+        """
 
     @Test("RSA 4096")
     func rsa4096() throws {
         let key = try makeKey(
-            base64: "MIICCgKCAgEAujc0Jhko+lc7iy8i0G1jQ5XUG89GPERPEr/nDfxL4DN9BPL9u7URgx/HQwoMKmwKWmwqdrGfo2U2VMu2tluIEePnfZ9clTSnbvca3MbaEWgp90FFnhDXABYePtaYlyyT4NhmA0uKi8T+B319/mV97vFcvQ6dANiuGWOHLz4mUIHsiwmM/ne1ch1rtVn5m5y9lYe4P4O6KaqYxUZbBe/aqeZEj68jLZ04SNfWFXR/CeoY6QioKmr1UrDVayFWPhyRvd4Z1mxNKMUT07vtSoVI5dFyDY5dck1eLLjAcEAOjTDtFKw88aPdQfO+WFm6LNHAFNqa5qIKov0hVSA28RZ2JjTXo9qnkQQ9ulRqp7JWC7MlcfJhU/xHyjuHeHZ830LhiYElAgTOfg+tO55ZZqeSbn3lqrrTYG3kVuSOH+d8dc0cnYtNwvuJhax+2Dr+ZH1AI8WzdzG/BWANnlmujxXy4KZMKXifvjdmAWq9FqhyIc2DDqjrbZzrtcOiAPKJsuB9zDBPMvK+IJugYYWxhqbgY90fJBJ9QJwbISauZ4naUdTcE76Dkh5NGSvRRyUVOIZwaqTOWxmgLamEVGrJl/C7aPtC1Xa4VJuCIiF6gLl3Bn+iCzviDEAhx1F5Be39BGw7zGTu+qj/hVPf29ze6/AgKqfnUFRDfPcf6GZ93Dh6pa0CAwEAAQ==",
+            base64:
+                "MIICCgKCAgEAujc0Jhko+lc7iy8i0G1jQ5XUG89GPERPEr/nDfxL4DN9BPL9u7URgx/HQwoMKmwKWmwqdrGfo2U2VMu2tluIEePnfZ9clTSnbvca3MbaEWgp90FFnhDXABYePtaYlyyT4NhmA0uKi8T+B319/mV97vFcvQ6dANiuGWOHLz4mUIHsiwmM/ne1ch1rtVn5m5y9lYe4P4O6KaqYxUZbBe/aqeZEj68jLZ04SNfWFXR/CeoY6QioKmr1UrDVayFWPhyRvd4Z1mxNKMUT07vtSoVI5dFyDY5dck1eLLjAcEAOjTDtFKw88aPdQfO+WFm6LNHAFNqa5qIKov0hVSA28RZ2JjTXo9qnkQQ9ulRqp7JWC7MlcfJhU/xHyjuHeHZ830LhiYElAgTOfg+tO55ZZqeSbn3lqrrTYG3kVuSOH+d8dc0cnYtNwvuJhax+2Dr+ZH1AI8WzdzG/BWANnlmujxXy4KZMKXifvjdmAWq9FqhyIc2DDqjrbZzrtcOiAPKJsuB9zDBPMvK+IJugYYWxhqbgY90fJBJ9QJwbISauZ4naUdTcE76Dkh5NGSvRRyUVOIZwaqTOWxmgLamEVGrJl/C7aPtC1Xa4VJuCIiF6gLl3Bn+iCzviDEAhx1F5Be39BGw7zGTu+qj/hVPf29ze6/AgKqfnUFRDfPcf6GZ93Dh6pa0CAwEAAQ==",
             type: kSecAttrKeyTypeRSA
         )
         #expect(SPKIHasher.sha256Base64(of: key) == "yZ54sIDTzZ9yicn2CZstPF6HkXZM615ECn1eivsMYdI=")
@@ -149,7 +153,7 @@ struct PinningInvariantTests {
 
     @Test("pin base64 que no mide 32 bytes se rechaza con su índice y tamaño")
     func wrongLengthIsRejected() {
-        let corto = Data(repeating: 0xBB, count: 20).base64EncodedString()   // SHA-1, no SHA-256
+        let corto = Data(repeating: 0xBB, count: 20).base64EncodedString()  // SHA-1, no SHA-256
         #expect(SSLPinningConfiguration.validatePins([corto, pin(0xA1)]) == .wrongLength(index: 0, bytes: 20))
     }
 
@@ -244,7 +248,9 @@ struct PinningDecisionTests {
     @Test("hash del servidor coincide → validated")
     func matchingHashValidates() {
         let config = SSLPinningConfiguration(publicKeyHashes: [pinA, pinB], hosts: .only(["api.example.com"]))
-        #expect(config.decision(host: "api.example.com", chainTrusted: true, serverKeyHashes: [otro, pinB]) == .validated)
+        #expect(
+            config.decision(host: "api.example.com", chainTrusted: true, serverKeyHashes: [otro, pinB]) == .validated
+        )
     }
 
     @Test("ningún hash coincide → failed")
@@ -269,7 +275,10 @@ struct PinningDecisionTests {
         // chainTrusted es autoclosure: si se evaluara, este test fallaría.
         let result = config.decision(
             host: "api.example.com",
-            chainTrusted: { Issue.record("la cadena no debía evaluarse"); return false }(),
+            chainTrusted: {
+                Issue.record("la cadena no debía evaluarse")
+                return false
+            }(),
             serverKeyHashes: [pinA]
         )
         #expect(result == .validated)

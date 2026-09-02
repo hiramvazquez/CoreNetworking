@@ -67,7 +67,11 @@ public final class URLSessionTransport: HTTPTransport {
             }
             return (data, httpResponse)
         } catch {
-            throw Self.remapPinningCancellation(error, pinningFailed: taskDelegate.pinningFailed, host: request.url?.host)
+            throw Self.remapPinningCancellation(
+                error,
+                pinningFailed: taskDelegate.pinningFailed,
+                host: request.url?.host
+            )
         }
     }
 
@@ -104,7 +108,11 @@ public final class URLSessionTransport: HTTPTransport {
             }
             return httpResponse
         } catch {
-            throw Self.remapPinningCancellation(error, pinningFailed: taskDelegate.pinningFailed, host: request.url?.host)
+            throw Self.remapPinningCancellation(
+                error,
+                pinningFailed: taskDelegate.pinningFailed,
+                host: request.url?.host
+            )
         }
     }
 

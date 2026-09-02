@@ -1,13 +1,15 @@
-import Testing
+import CoreNetworkingTestSupport
 import Foundation
+import Testing
 import os
+
+@testable import CoreNetworking
+
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
 import Glibc
 #endif
-@testable import CoreNetworking
-import CoreNetworkingTestSupport
 
 /// Colector thread-safe para closures de progreso @Sendable.
 final class ProgressLog: Sendable {
@@ -41,7 +43,7 @@ final class LoopbackHTTPServer: @unchecked Sendable {
         var address = sockaddr_in()
         address.sin_family = sa_family_t(AF_INET)
         address.sin_addr.s_addr = inet_addr("127.0.0.1")
-        address.sin_port = 0   // el sistema asigna un puerto libre
+        address.sin_port = 0  // el sistema asigna un puerto libre
 
         let bindResult = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
@@ -141,11 +143,13 @@ struct TransferTests {
     func uploadHappyPath() async throws {
         let host = "xfer-upload.test"
         let (service, baseURL) = try makeService(host: host)
-        MockURLProtocol.register(MockNetworkExchange(
-            method: .put,
-            url: baseURL.appendingPathComponent("/upload"),
-            response: MockResponse(statusCode: 200, data: Data(#"{"id":42}"#.utf8))
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                method: .put,
+                url: baseURL.appendingPathComponent("/upload"),
+                response: MockResponse(statusCode: 200, data: Data(#"{"id":42}"#.utf8))
+            )
+        )
 
         let result: UploadResult = try await service.upload(
             request: PutUpload(),
@@ -159,11 +163,13 @@ struct TransferTests {
     func uploadGoesThroughRetry() async throws {
         let host = "xfer-upload-retry.test"
         let (service, baseURL) = try makeService(host: host, maxAttempts: 2)
-        MockURLProtocol.register(MockNetworkExchange(
-            method: .put,
-            url: baseURL.appendingPathComponent("/upload"),
-            response: MockResponse(statusCode: 500)
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                method: .put,
+                url: baseURL.appendingPathComponent("/upload"),
+                response: MockResponse(statusCode: 500)
+            )
+        )
 
         await #expect(throws: APIError.self) {
             let _: UploadResult = try await service.upload(request: PutUpload(), data: Data())
@@ -175,11 +181,13 @@ struct TransferTests {
     func uploadPostDoesNotRetry() async throws {
         let host = "xfer-upload-post.test"
         let (service, baseURL) = try makeService(host: host, maxAttempts: 3)
-        MockURLProtocol.register(MockNetworkExchange(
-            method: .post,
-            url: baseURL.appendingPathComponent("/upload"),
-            response: MockResponse(statusCode: 500)
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                method: .post,
+                url: baseURL.appendingPathComponent("/upload"),
+                response: MockResponse(statusCode: 500)
+            )
+        )
 
         await #expect(throws: APIError.self) {
             let _: UploadResult = try await service.upload(request: PostUpload(), data: Data())
@@ -194,14 +202,16 @@ struct TransferTests {
         let host = "xfer-data.test"
         let (service, baseURL) = try makeService(host: host)
         let payload = Data(repeating: 0xAB, count: 256 * 1024)
-        MockURLProtocol.register(MockNetworkExchange(
-            url: baseURL.appendingPathComponent("/file"),
-            response: MockResponse(
-                statusCode: 200,
-                data: payload,
-                headers: ["Content-Length": String(payload.count)]
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                url: baseURL.appendingPathComponent("/file"),
+                response: MockResponse(
+                    statusCode: 200,
+                    data: payload,
+                    headers: ["Content-Length": String(payload.count)]
+                )
             )
-        ))
+        )
 
         let log = ProgressLog()
         let data = try await service.data(for: FileRequest()) { log.append($0) }
@@ -218,10 +228,12 @@ struct TransferTests {
         let host = "xfer-data-nolen.test"
         let (service, baseURL) = try makeService(host: host)
         let payload = Data("hola".utf8)
-        MockURLProtocol.register(MockNetworkExchange(
-            url: baseURL.appendingPathComponent("/file"),
-            response: MockResponse(statusCode: 200, data: payload)
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                url: baseURL.appendingPathComponent("/file"),
+                response: MockResponse(statusCode: 200, data: payload)
+            )
+        )
 
         let log = ProgressLog()
         let data = try await service.data(for: FileRequest()) { log.append($0) }
@@ -233,10 +245,12 @@ struct TransferTests {
     func dataHTTPError() async throws {
         let host = "xfer-data-404.test"
         let (service, baseURL) = try makeService(host: host)
-        MockURLProtocol.register(MockNetworkExchange(
-            url: baseURL.appendingPathComponent("/file"),
-            response: MockResponse(statusCode: 404)
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                url: baseURL.appendingPathComponent("/file"),
+                response: MockResponse(statusCode: 404)
+            )
+        )
 
         do {
             _ = try await service.data(for: FileRequest(), progress: nil)
@@ -257,14 +271,16 @@ struct TransferTests {
         let host = "xfer-data-5mb.test"
         let (service, baseURL) = try makeService(host: host)
         let payload = Data(repeating: 0xCD, count: 5 * 1024 * 1024)
-        MockURLProtocol.register(MockNetworkExchange(
-            url: baseURL.appendingPathComponent("/file"),
-            response: MockResponse(
-                statusCode: 200,
-                data: payload,
-                headers: ["Content-Length": String(payload.count)]
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                url: baseURL.appendingPathComponent("/file"),
+                response: MockResponse(
+                    statusCode: 200,
+                    data: payload,
+                    headers: ["Content-Length": String(payload.count)]
+                )
             )
-        ))
+        )
 
         let start = ContinuousClock.now
         let data = try await service.data(for: FileRequest(), progress: nil)
@@ -314,10 +330,12 @@ struct TransferTests {
     func downloadToDiskHTTPError() async throws {
         let host = "xfer-download-disk-404.test"
         let (service, baseURL) = try makeService(host: host)
-        MockURLProtocol.register(MockNetworkExchange(
-            url: baseURL.appendingPathComponent("/file"),
-            response: MockResponse(statusCode: 404, data: Data("not found".utf8))
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                url: baseURL.appendingPathComponent("/file"),
+                response: MockResponse(statusCode: 404, data: Data("not found".utf8))
+            )
+        )
 
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("cn04-download-404-\(UUID().uuidString).bin")
@@ -330,7 +348,10 @@ struct TransferTests {
             #expect(error.code == .httpStatus)
             #expect(error.statusCode == 404)
         }
-        #expect(!FileManager.default.fileExists(atPath: destination.path), "un download fallido no debe dejar nada en destination")
+        #expect(
+            !FileManager.default.fileExists(atPath: destination.path),
+            "un download fallido no debe dejar nada en destination"
+        )
     }
 
     @Test("download(to:) sustituye un fichero existente en destination")

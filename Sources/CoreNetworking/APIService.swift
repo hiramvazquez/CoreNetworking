@@ -105,7 +105,13 @@ public final class APIService: APIServiceProtocol {
         let (data, response, summary) = try await performWithRetry(request) { [transport] urlRequest in
             try await transport.send(urlRequest, progress: nil)
         }
-        return try Self.decode(Request.Response.self, from: data, request: summary, response: response, using: configuration.makeDecoder)
+        return try Self.decode(
+            Request.Response.self,
+            from: data,
+            request: summary,
+            response: response,
+            using: configuration.makeDecoder
+        )
     }
 
     public func execute<Request: BaseRequest, Value: Decodable & Sendable>(
@@ -115,7 +121,13 @@ public final class APIService: APIServiceProtocol {
         let (data, response, summary) = try await performWithRetry(request) { [transport] urlRequest in
             try await transport.send(urlRequest, progress: nil)
         }
-        return try Self.decode(Value.self, from: data, request: summary, response: response, using: configuration.makeDecoder)
+        return try Self.decode(
+            Value.self,
+            from: data,
+            request: summary,
+            response: response,
+            using: configuration.makeDecoder
+        )
     }
 
     // MARK: - Upload
@@ -134,7 +146,13 @@ public final class APIService: APIServiceProtocol {
             let transferProgress = progress.map { TransferProgress(onUpload: $0) }
             return try await transport.send(urlRequest, progress: transferProgress)
         }
-        return try Self.decode(Response.self, from: data, request: summary, response: response, using: configuration.makeDecoder)
+        return try Self.decode(
+            Response.self,
+            from: data,
+            request: summary,
+            response: response,
+            using: configuration.makeDecoder
+        )
     }
 
     // MARK: - Data (in-memory download)
@@ -176,7 +194,11 @@ public final class APIService: APIServiceProtocol {
             do {
                 urlRequest = try await interceptor.willSend(urlRequest, context: context)
             } catch {
-                let apiError = APIError(code: .interceptor, request: APIError.RequestSummary(urlRequest), underlying: error)
+                let apiError = APIError(
+                    code: .interceptor,
+                    request: APIError.RequestSummary(urlRequest),
+                    underlying: error
+                )
                 await notifyInterceptorsOfFailure(apiError, context: context)
                 throw apiError
             }
@@ -299,8 +321,9 @@ public final class APIService: APIServiceProtocol {
                 // ningún interceptor ni retrier llegó a verlo (no hubo
                 // `willSend`), así que solo `retryPolicy` decide.
                 guard attemptsMade < retryPolicy.maxAttempts,
-                      methodAllowsRetry,
-                      retryPolicy.shouldRetry(apiError, attemptsMade) else { throw apiError }
+                    methodAllowsRetry,
+                    retryPolicy.shouldRetry(apiError, attemptsMade)
+                else { throw apiError }
 
                 let delay = apiError.retryAfter ?? retryPolicy.jitteredDelay(for: attemptsMade - 1)
                 NetLog.retry.debug(
@@ -360,7 +383,11 @@ public final class APIService: APIServiceProtocol {
             } catch {
                 // `error` ya es `APIError` (typed throws de `willSend`): lo
                 // que el interceptor lanzó viaja intacto en `underlying`.
-                let apiError = APIError(code: .interceptor, request: APIError.RequestSummary(urlRequest), underlying: error)
+                let apiError = APIError(
+                    code: .interceptor,
+                    request: APIError.RequestSummary(urlRequest),
+                    underlying: error
+                )
                 await notifyInterceptorsOfFailure(apiError, context: context)
                 throw AttemptFailure(error: apiError, context: context)
             }
@@ -457,7 +484,8 @@ public final class APIService: APIServiceProtocol {
                     Response.self,
                     DecodingError.Context(
                         codingPath: [],
-                        debugDescription: "Expected a body to decode \(Response.self), got an empty body (status \(response.statusCode))."
+                        debugDescription:
+                            "Expected a body to decode \(Response.self), got an empty body (status \(response.statusCode))."
                     )
                 )
             )
@@ -480,10 +508,12 @@ public final class APIService: APIServiceProtocol {
     private func buildURLRequest<Request: BaseRequest>(
         from request: Request
     ) throws(APIError) -> URLRequest {
-        guard var urlComponents = URLComponents(
-            url: configuration.baseURL.appending(path: request.path),
-            resolvingAgainstBaseURL: true
-        ) else {
+        guard
+            var urlComponents = URLComponents(
+                url: configuration.baseURL.appending(path: request.path),
+                resolvingAgainstBaseURL: true
+            )
+        else {
             throw APIError(code: .invalidURL, request: APIError.RequestSummary(method: request.method, url: nil))
         }
 

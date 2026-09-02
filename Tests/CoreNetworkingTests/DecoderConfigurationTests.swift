@@ -1,7 +1,8 @@
-import Testing
-import Foundation
-@testable import CoreNetworking
 import CoreNetworkingTestSupport
+import Foundation
+import Testing
+
+@testable import CoreNetworking
 
 /// El decoder que usa `execute` es del CONSUMIDOR, no del paquete.
 ///
@@ -62,10 +63,12 @@ struct DecoderConfigurationTests {
             return d
         }
         let cuerpo = Data(#"{"nombre_completo":"Ada","fecha_alta":"2026-08-27T10:00:00Z"}"#.utf8)
-        MockURLProtocol.register(MockNetworkExchange(
-            url: baseURL.appendingPathComponent("perfil"),
-            response: MockResponse(statusCode: 200, data: cuerpo)
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                url: baseURL.appendingPathComponent("perfil"),
+                response: MockResponse(statusCode: 200, data: cuerpo)
+            )
+        )
 
         let perfil: PerfilResponse = try await api.execute(PerfilRequest())
 
@@ -78,8 +81,14 @@ struct DecoderConfigurationTests {
             DateComponents(
                 calendar: Calendar(identifier: .gregorian),
                 timeZone: TimeZone(secondsFromGMT: 0),
-                year: 2026, month: 8, day: 27, hour: 10, minute: 0, second: 0
-            ).date
+                year: 2026,
+                month: 8,
+                day: 27,
+                hour: 10,
+                minute: 0,
+                second: 0
+            )
+            .date
         )
         #expect(perfil.fechaAlta == esperada)
     }
@@ -90,7 +99,8 @@ struct DecoderConfigurationTests {
     @Test("sin configurar nada, el comportamiento por defecto es el de antes")
     func elDefaultSigueSiendoElDecoderDeSiempre() async throws {
         struct CrudoResponse: Decodable, Sendable, Equatable {
-            let nombre_completo: String   // swiftlint:disable:this identifier_name
+            // swift-format-ignore: AlwaysUseLowerCamelCase
+            let nombre_completo: String  // clave literal del JSON: prueba el decoder SIN estrategia
         }
         struct CrudoRequest: BaseRequest {
             typealias Response = CrudoResponse
@@ -106,10 +116,12 @@ struct DecoderConfigurationTests {
             protocolClasses: [MockURLProtocol.self]
         )
         let api = APIService(configuration: configuration, retryPolicy: .noRetry)
-        MockURLProtocol.register(MockNetworkExchange(
-            url: baseURL.appendingPathComponent("crudo"),
-            response: MockResponse(statusCode: 200, data: Data(#"{"nombre_completo":"Ada"}"#.utf8))
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                url: baseURL.appendingPathComponent("crudo"),
+                response: MockResponse(statusCode: 200, data: Data(#"{"nombre_completo":"Ada"}"#.utf8))
+            )
+        )
 
         let crudo: CrudoResponse = try await api.execute(CrudoRequest())
         #expect(crudo.nombre_completo == "Ada")
@@ -130,10 +142,12 @@ struct DecoderConfigurationTests {
             return d
         }
         let cuerpo = Data(#"{"nombre_completo":"Ada","fecha_alta":"2026-08-27T10:00:00Z"}"#.utf8)
-        MockURLProtocol.register(MockNetworkExchange(
-            url: baseURL.appendingPathComponent("perfil"),
-            response: MockResponse(statusCode: 200, data: cuerpo)
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                url: baseURL.appendingPathComponent("perfil"),
+                response: MockResponse(statusCode: 200, data: cuerpo)
+            )
+        )
 
         let _: PerfilResponse = try await api.execute(PerfilRequest())
         let _: PerfilResponse = try await api.execute(PerfilRequest())
@@ -147,7 +161,15 @@ struct DecoderConfigurationTests {
     private final class Contador: @unchecked Sendable {
         private let candado = NSLock()
         private var n = 0
-        func incrementa() { candado.lock(); n += 1; candado.unlock() }
-        var valor: Int { candado.lock(); defer { candado.unlock() }; return n }
+        func incrementa() {
+            candado.lock()
+            n += 1
+            candado.unlock()
+        }
+        var valor: Int {
+            candado.lock()
+            defer { candado.unlock() }
+            return n
+        }
     }
 }

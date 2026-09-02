@@ -1,7 +1,8 @@
-import Testing
-import Foundation
-@testable import CoreNetworking
 import CoreNetworkingTestSupport
+import Foundation
+import Testing
+
+@testable import CoreNetworking
 
 /// `buildURLRequest`: `Empty`/204, `Accept`/`Content-Type`, `makeEncoder` y
 /// `sessionConfiguration` (CN-05). Cubre lo que `PipelineTests` y
@@ -9,7 +10,6 @@ import CoreNetworkingTestSupport
 /// propio `Response` todavía.
 @Suite("Construcción del request: Empty/204, Accept/Content-Type, encoder, sessionConfiguration")
 struct RequestBuildingTests {
-
     // MARK: - Un endpoint sin ceremonia
 
     /// `struct GetGames: BaseRequest { let path = "/games"; let method = HTTPMethod.get }`
@@ -25,10 +25,12 @@ struct RequestBuildingTests {
         let baseURL = try #require(URL(string: "https://request-building-minimal.test"))
         let configuration = NetworkingConfiguration(baseURL: baseURL, protocolClasses: [MockURLProtocol.self])
         let service = APIService(configuration: configuration, retryPolicy: .noRetry)
-        MockURLProtocol.register(MockNetworkExchange(
-            url: baseURL.appendingPathComponent("/games"),
-            response: MockResponse(statusCode: 200)
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                url: baseURL.appendingPathComponent("/games"),
+                response: MockResponse(statusCode: 200)
+            )
+        )
 
         // El propio tipo de retorno YA es `Empty` (inferido de `GetGames.Response`,
         // que no declara nada): si esto compila, ya probó lo que hace falta.
@@ -49,10 +51,12 @@ struct RequestBuildingTests {
         let baseURL = try #require(URL(string: "https://request-building-204.test"))
         let configuration = NetworkingConfiguration(baseURL: baseURL, protocolClasses: [MockURLProtocol.self])
         let service = APIService(configuration: configuration, retryPolicy: .noRetry)
-        MockURLProtocol.register(MockNetworkExchange(
-            url: baseURL.appendingPathComponent("/games"),
-            response: MockResponse(statusCode: 204)
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                url: baseURL.appendingPathComponent("/games"),
+                response: MockResponse(statusCode: 204)
+            )
+        )
 
         _ = try await service.execute(GetGames())
     }
@@ -62,10 +66,12 @@ struct RequestBuildingTests {
         let baseURL = try #require(URL(string: "https://request-building-emptybody.test"))
         let configuration = NetworkingConfiguration(baseURL: baseURL, protocolClasses: [MockURLProtocol.self])
         let service = APIService(configuration: configuration, retryPolicy: .noRetry)
-        MockURLProtocol.register(MockNetworkExchange(
-            url: baseURL.appendingPathComponent("/games"),
-            response: MockResponse(statusCode: 200)
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                url: baseURL.appendingPathComponent("/games"),
+                response: MockResponse(statusCode: 200)
+            )
+        )
 
         do {
             _ = try await service.execute(GetGamesTyped())
@@ -81,10 +87,12 @@ struct RequestBuildingTests {
         let baseURL = try #require(URL(string: "https://request-building-empty-ignores-body.test"))
         let configuration = NetworkingConfiguration(baseURL: baseURL, protocolClasses: [MockURLProtocol.self])
         let service = APIService(configuration: configuration, retryPolicy: .noRetry)
-        MockURLProtocol.register(MockNetworkExchange(
-            url: baseURL.appendingPathComponent("/games"),
-            response: MockResponse(statusCode: 200, data: Data(#"{"unexpected":true}"#.utf8))
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                url: baseURL.appendingPathComponent("/games"),
+                response: MockResponse(statusCode: 200, data: Data(#"{"unexpected":true}"#.utf8))
+            )
+        )
 
         _ = try await service.execute(GetGames())
     }
@@ -108,10 +116,12 @@ struct RequestBuildingTests {
         let baseURL = try #require(URL(string: "https://request-building-headers-get.test"))
         let configuration = NetworkingConfiguration(baseURL: baseURL, protocolClasses: [MockURLProtocol.self])
         let service = APIService(configuration: configuration, retryPolicy: .noRetry)
-        MockURLProtocol.register(MockNetworkExchange(
-            url: baseURL.appendingPathComponent("/no-body"),
-            response: MockResponse(statusCode: 200)
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                url: baseURL.appendingPathComponent("/no-body"),
+                response: MockResponse(statusCode: 200)
+            )
+        )
 
         _ = try await service.execute(GetNoBody())
 
@@ -128,11 +138,13 @@ struct RequestBuildingTests {
         let baseURL = try #require(URL(string: "https://request-building-headers-post.test"))
         let configuration = NetworkingConfiguration(baseURL: baseURL, protocolClasses: [MockURLProtocol.self])
         let service = APIService(configuration: configuration, retryPolicy: .noRetry)
-        MockURLProtocol.register(MockNetworkExchange(
-            method: .post,
-            url: baseURL.appendingPathComponent("/with-body"),
-            response: MockResponse(statusCode: 200)
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                method: .post,
+                url: baseURL.appendingPathComponent("/with-body"),
+                response: MockResponse(statusCode: 200)
+            )
+        )
 
         _ = try await service.execute(PostWithBody(body: .init(title: "x")))
 
@@ -166,11 +178,13 @@ struct RequestBuildingTests {
             }
         )
         let service = APIService(configuration: configuration, retryPolicy: .noRetry)
-        MockURLProtocol.register(MockNetworkExchange(
-            method: .post,
-            url: baseURL.appendingPathComponent("/games"),
-            response: MockResponse(statusCode: 200)
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                method: .post,
+                url: baseURL.appendingPathComponent("/games"),
+                response: MockResponse(statusCode: 200)
+            )
+        )
 
         _ = try await service.execute(CreateGame(body: .init(gameTitle: "Ada")))
 
@@ -199,10 +213,12 @@ struct RequestBuildingTests {
             }
         )
         let service = APIService(configuration: configuration, retryPolicy: .noRetry)
-        MockURLProtocol.register(MockNetworkExchange(
-            url: baseURL.appendingPathComponent("/games"),
-            response: MockResponse(statusCode: 200)
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                url: baseURL.appendingPathComponent("/games"),
+                response: MockResponse(statusCode: 200)
+            )
+        )
 
         // Si `sessionConfiguration` no hubiera llegado a la URLSession, esto
         // fallaría con `.transport` (petición real a un host que no existe)

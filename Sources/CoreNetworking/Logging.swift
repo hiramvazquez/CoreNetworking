@@ -36,8 +36,7 @@ enum HeaderRedactor {
     static func redact(_ headers: [String: String]) -> [String: String] {
         headers.reduce(into: [:]) { result, header in
             let name = header.key.lowercased()
-            let isSensitive = sensitiveHeaderNames.contains(name) ||
-                sensitiveMarkers.contains(where: name.contains)
+            let isSensitive = sensitiveHeaderNames.contains(name) || sensitiveMarkers.contains(where: name.contains)
             result[header.key] = isSensitive ? "<redacted>" : header.value
         }
     }

@@ -163,7 +163,9 @@ public struct LoggingInterceptor: RequestInterceptor {
     public func willSend(_ request: URLRequest, context: RequestContext) async throws(APIError) -> URLRequest {
         let method = request.httpMethod ?? "GET"
         let url = request.url?.absoluteString ?? "<no url>"
-        NetLog.network.debug("→ [\(context.id.uuidString, privacy: .public)] \(method, privacy: .public) \(url, privacy: .private)")
+        NetLog.network.debug(
+            "→ [\(context.id.uuidString, privacy: .public)] \(method, privacy: .public) \(url, privacy: .private)"
+        )
 
         if includeHeaders, let headers = request.allHTTPHeaderFields, !headers.isEmpty {
             let redacted = HeaderRedactor.redact(headers)
@@ -172,7 +174,8 @@ public struct LoggingInterceptor: RequestInterceptor {
 
         #if DEBUG
         if includeBody, let body = request.httpBody,
-           let text = String(data: body, encoding: .utf8) {
+            let text = String(data: body, encoding: .utf8)
+        {
             NetLog.network.debug("   body: \(text, privacy: .private)")
         }
         #endif

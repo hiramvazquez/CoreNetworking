@@ -1,5 +1,5 @@
-import Foundation
 import CoreNetworking
+import Foundation
 import os
 
 /// In-memory stub of `APIServiceProtocol` for unit-testing consumers.

@@ -1,6 +1,7 @@
-import Testing
 import Foundation
 import Security
+import Testing
+
 @testable import CoreNetworking
 
 /// El DELEGADO de pinning, que es quien de verdad decide en runtime si se
@@ -35,7 +36,6 @@ import Security
 ///   de más abajo, que es exactamente el hueco que dejaba viva esta mutación.
 @Suite("Delegado de pinning: el cableado que decide en runtime")
 struct PinningDelegateTests {
-
     // MARK: - Fixture
 
     /// Certificado autofirmado EC P-256 generado con openssl para estos tests.
@@ -46,13 +46,13 @@ struct PinningDelegateTests {
     ///   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
     ///     -keyout k.pem -out c.pem -days 3650 -nodes -subj "/CN=pinning.test"
     private static let certificadoDER = """
-    MIIBgjCCASmgAwIBAgIURhTNAZdQ3+8Wo/yucOXP6k0wy/QwCgYIKoZIzj0EAwIwFzEVMBMGA1UEAwwMcGlubmluZy50ZXN0MB4X\
-    DTI2MDgyODE1MjMxOFoXDTM2MDgyNTE1MjMxOFowFzEVMBMGA1UEAwwMcGlubmluZy50ZXN0MFkwEwYHKoZIzj0CAQYIKoZIzj0D\
-    AQcDQgAELzCfRZ4CeW7OsKx7MHQfnD6bX5QDiAa7Grj+SEQNzefKTAwr3x6ABMFdE3dF9Iu/1213azkKg8srtm6seYJf4qNTMFEw\
-    HQYDVR0OBBYEFGm84OwzN47FA022UklrpSvWv05hMB8GA1UdIwQYMBaAFGm84OwzN47FA022UklrpSvWv05hMA8GA1UdEwEB/wQF\
-    MAMBAf8wCgYIKoZIzj0EAwIDRwAwRAIge9yJUXBKBGAIzpRhJIhic8rcX3jdyAKy2YyN6I3V/+4CIFVAE1bFOIs8A8VMtZ/9w6ky\
-    QjFc5gXPD55BYuR8yTm0
-    """
+        MIIBgjCCASmgAwIBAgIURhTNAZdQ3+8Wo/yucOXP6k0wy/QwCgYIKoZIzj0EAwIwFzEVMBMGA1UEAwwMcGlubmluZy50ZXN0MB4X\
+        DTI2MDgyODE1MjMxOFoXDTM2MDgyNTE1MjMxOFowFzEVMBMGA1UEAwwMcGlubmluZy50ZXN0MFkwEwYHKoZIzj0CAQYIKoZIzj0D\
+        AQcDQgAELzCfRZ4CeW7OsKx7MHQfnD6bX5QDiAa7Grj+SEQNzefKTAwr3x6ABMFdE3dF9Iu/1213azkKg8srtm6seYJf4qNTMFEw\
+        HQYDVR0OBBYEFGm84OwzN47FA022UklrpSvWv05hMB8GA1UdIwQYMBaAFGm84OwzN47FA022UklrpSvWv05hMA8GA1UdEwEB/wQF\
+        MAMBAf8wCgYIKoZIzj0EAwIDRwAwRAIge9yJUXBKBGAIzpRhJIhic8rcX3jdyAKy2YyN6I3V/+4CIFVAE1bFOIs8A8VMtZ/9w6ky\
+        QjFc5gXPD55BYuR8yTm0
+        """
 
     /// `openssl x509 -pubkey -noout | openssl pkey -pubin -outform DER
     ///  | openssl dgst -sha256 -binary | base64`
@@ -121,7 +121,9 @@ struct PinningDelegateTests {
             sender: SenderInerte()
         )
         let (disposition, credential) = await withCheckedContinuation { continuation in
-            delegado.urlSession(URLSession.shared, task: tareaInerte(), didReceive: challenge) { disposition, credential in
+            delegado.urlSession(URLSession.shared, task: tareaInerte(), didReceive: challenge) {
+                disposition,
+                credential in
                 continuation.resume(returning: (disposition, credential))
             }
         }
@@ -147,7 +149,7 @@ struct PinningDelegateTests {
         let pinning = SSLPinningConfiguration(
             publicKeyHashes: [Self.otroPin, Self.otroPinDeRespaldo],
             hosts: .only(["pinning.test"]),
-            chainValidation: .unsafeSkipForDevelopment   // el cert es autofirmado: la cadena no evalúa
+            chainValidation: .unsafeSkipForDevelopment  // el cert es autofirmado: la cadena no evalúa
         )
         let (disposition, credential, _) = await decidir(
             pinning: pinning,
@@ -241,13 +243,13 @@ struct PinningDelegateTests {
     func challengeQueNoEsServerTrust() async throws {
         let pinning = SSLPinningConfiguration(
             publicKeyHashes: [Self.pinDelCertificado, Self.otroPinDeRespaldo],
-            hosts: .all                          // pinnearía TODO host…
+            hosts: .all  // pinnearía TODO host…
         )
         let (disposition, credential, delegado) = await decidir(
             pinning: pinning,
             espacio: EspacioConTrust(
                 trust: nil,
-                metodo: NSURLAuthenticationMethodHTTPBasic,   // …pero esto no es TLS
+                metodo: NSURLAuthenticationMethodHTTPBasic,  // …pero esto no es TLS
                 host: "pinning.test"
             )
         )

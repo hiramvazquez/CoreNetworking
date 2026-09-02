@@ -30,7 +30,11 @@ public protocol HTTPTransport: Sendable {
     ///   - progress: Optional download progress callback. `onUpload` is
     ///     ignored (a download has no request body to report).
     /// - Throws: Same contract as `send`.
-    func download(_ request: URLRequest, to destination: URL, progress: TransferProgress?) async throws -> HTTPURLResponse
+    func download(
+        _ request: URLRequest,
+        to destination: URL,
+        progress: TransferProgress?
+    ) async throws -> HTTPURLResponse
 }
 
 /// Upload/download progress callbacks for one `HTTPTransport.send` call.

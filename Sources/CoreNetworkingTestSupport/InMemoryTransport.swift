@@ -1,5 +1,5 @@
-import Foundation
 import CoreNetworking
+import Foundation
 
 /// In-memory `HTTPTransport`: no `URLSession`, no global registry, no
 /// `URLProtocol` — the primary way to unit-test `APIService`.
@@ -108,12 +108,14 @@ public actor InMemoryTransport: HTTPTransport {
             if let latency {
                 try await Task.sleep(for: latency)
             }
-            guard let response = HTTPURLResponse(
-                url: url,
-                statusCode: status,
-                httpVersion: "HTTP/1.1",
-                headerFields: headers
-            ) else {
+            guard
+                let response = HTTPURLResponse(
+                    url: url,
+                    statusCode: status,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: headers
+                )
+            else {
                 throw URLError(.badServerResponse)
             }
             progress?.onUpload?(1.0)
@@ -126,7 +128,11 @@ public actor InMemoryTransport: HTTPTransport {
     /// `destination` instead of returning it — every outcome (including
     /// `.pinningFailure`, latency and response sequences) behaves exactly
     /// the same for `download` as for `send`.
-    public func download(_ request: URLRequest, to destination: URL, progress: TransferProgress?) async throws -> HTTPURLResponse {
+    public func download(
+        _ request: URLRequest,
+        to destination: URL,
+        progress: TransferProgress?
+    ) async throws -> HTTPURLResponse {
         let (data, response) = try await send(request, progress: progress)
         try data.write(to: destination, options: .atomic)
         return response

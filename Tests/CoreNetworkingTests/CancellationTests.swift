@@ -1,7 +1,8 @@
-import Testing
-import Foundation
-@testable import CoreNetworking
 import CoreNetworkingTestSupport
+import Foundation
+import Testing
+
+@testable import CoreNetworking
 
 /// Cancelación REAL: el mock entrega con latencia larga (5 s) y `stopLoading`
 /// cancela la entrega pendiente. Si la cancelación del Task no cancelara la
@@ -32,12 +33,14 @@ struct CancellationTests {
     }
 
     private func registerSlowMock(url: URL, method: HTTPMethod = .get) {
-        MockURLProtocol.register(MockNetworkExchange(
-            method: method,
-            url: url,
-            response: MockResponse(statusCode: 200, data: Data(#"{"ok":true}"#.utf8)),
-            latency: .seconds(5)
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                method: method,
+                url: url,
+                response: MockResponse(statusCode: 200, data: Data(#"{"ok":true}"#.utf8)),
+                latency: .seconds(5)
+            )
+        )
     }
 
     private func expectCancelledFast(
@@ -112,10 +115,12 @@ struct CancellationTests {
         let host = "cancel-backoff.test"
         let policy = RetryPolicy(maxAttempts: 2, initialDelay: .seconds(5), maxDelay: .seconds(5))
         let (service, baseURL) = try makeService(host: host, policy: policy)
-        MockURLProtocol.register(MockNetworkExchange(
-            url: baseURL.appendingPathComponent("/slow"),
-            response: MockResponse(statusCode: 500)
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                url: baseURL.appendingPathComponent("/slow"),
+                response: MockResponse(statusCode: 500)
+            )
+        )
 
         await expectCancelledFast {
             let _: Payload = try await service.execute(SlowRequest())

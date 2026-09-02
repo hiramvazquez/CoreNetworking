@@ -1,7 +1,8 @@
-import Testing
-import Foundation
-@testable import CoreNetworking
 import CoreNetworkingTestSupport
+import Foundation
+import Testing
+
+@testable import CoreNetworking
 
 @Suite("Pipeline de execute: URL, headers, decode — InMemoryTransport (unidad)")
 struct PipelineTests {
@@ -30,10 +31,12 @@ struct PipelineTests {
     @Test("respuesta mockeada se decodifica")
     func decodesMockedResponse() async throws {
         let transport = InMemoryTransport()
-        await transport.register(InMemoryTransport.Exchange(
-            url: baseURL.appendingPathComponent("/sample"),
-            response: .response(status: 200, body: Data(#"{"value":1}"#.utf8))
-        ))
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: baseURL.appendingPathComponent("/sample"),
+                response: .response(status: 200, body: Data(#"{"value":1}"#.utf8))
+            )
+        )
         let service = makeService(transport: transport)
 
         let result = try await service.execute(SampleRequest())
@@ -44,10 +47,12 @@ struct PipelineTests {
     func queryItemsAppended() async throws {
         let transport = InMemoryTransport()
         let expectedURL = try #require(URL(string: "https://unit.test/sample?page=2&limit=20"))
-        await transport.register(InMemoryTransport.Exchange(
-            url: expectedURL,
-            response: .response(status: 200, body: Data(#"{"value":1}"#.utf8))
-        ))
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: expectedURL,
+                response: .response(status: 200, body: Data(#"{"value":1}"#.utf8))
+            )
+        )
         let service = makeService(transport: transport)
 
         var request = SampleRequest()
@@ -63,10 +68,12 @@ struct PipelineTests {
     func invalidJSONThrowsDecodingError() async throws {
         let transport = InMemoryTransport()
         let body = Data("no-json".utf8)
-        await transport.register(InMemoryTransport.Exchange(
-            url: baseURL.appendingPathComponent("/sample"),
-            response: .response(status: 200, body: body)
-        ))
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: baseURL.appendingPathComponent("/sample"),
+                response: .response(status: 200, body: body)
+            )
+        )
         let service = makeService(transport: transport)
 
         do {
@@ -84,10 +91,12 @@ struct PipelineTests {
     func mockIsReusable() async throws {
         let transport = InMemoryTransport()
         let url = baseURL.appendingPathComponent("/sample")
-        await transport.register(InMemoryTransport.Exchange(
-            url: url,
-            response: .response(status: 200, body: Data(#"{"value":7}"#.utf8))
-        ))
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: url,
+                response: .response(status: 200, body: Data(#"{"value":7}"#.utf8))
+            )
+        )
         let service = makeService(transport: transport)
 
         let first = try await service.execute(SampleRequest())
@@ -132,10 +141,12 @@ struct PipelineIntegrationTests {
     @Test("merge de headers a través de URLSession real: los del request PISAN a los de la configuración")
     func headerMerge() async throws {
         let (service, baseURL) = try makeService(host: "pipe-headers.test")
-        MockURLProtocol.register(MockNetworkExchange(
-            url: baseURL.appendingPathComponent("/sample"),
-            response: MockResponse(statusCode: 200, data: Data(#"{"value":1}"#.utf8))
-        ))
+        MockURLProtocol.register(
+            MockNetworkExchange(
+                url: baseURL.appendingPathComponent("/sample"),
+                response: MockResponse(statusCode: 200, data: Data(#"{"value":1}"#.utf8))
+            )
+        )
 
         var request = SampleRequest()
         request.headers = ["X-Default": "overridden", "X-Request": "req"]

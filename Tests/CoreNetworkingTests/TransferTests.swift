@@ -39,7 +39,7 @@ struct TransferTests {
     ) throws -> (APIService, URL) {
         let baseURL = try #require(URL(string: "https://\(host)"))
         let configuration = NetworkingConfiguration(baseURL: baseURL, protocolClasses: [MockURLProtocol.self])
-        let policy = RetryPolicy(maxAttempts: maxAttempts, initialDelay: 0.01, maxDelay: 0.05)
+        let policy = RetryPolicy(maxAttempts: maxAttempts, initialDelay: .milliseconds(10), maxDelay: .milliseconds(50))
         return (APIService(configuration: configuration, retryPolicy: policy), baseURL)
     }
 

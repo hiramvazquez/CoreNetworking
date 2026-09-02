@@ -2,21 +2,21 @@ import Testing
 import Foundation
 @testable import CoreNetworking
 
-@Suite("RetryPolicy: matemática del backoff")
+@Suite("RetryPolicy: matemática del backoff (Duration)")
 struct RetryPolicyTests {
     @Test("backoff exponencial con tope")
     func exponentialBackoffCapped() {
-        let policy = RetryPolicy(maxAttempts: 5, initialDelay: 1.0, maxDelay: 5.0, multiplier: 2.0)
-        #expect(policy.baseDelay(for: 0) == 1.0)
-        #expect(policy.baseDelay(for: 1) == 2.0)
-        #expect(policy.baseDelay(for: 2) == 4.0)
-        #expect(policy.baseDelay(for: 3) == 5.0) // capped
-        #expect(policy.baseDelay(for: 10) == 5.0)
+        let policy = RetryPolicy(maxAttempts: 5, initialDelay: .seconds(1), maxDelay: .seconds(5), multiplier: 2.0)
+        #expect(policy.baseDelay(for: 0) == .seconds(1))
+        #expect(policy.baseDelay(for: 1) == .seconds(2))
+        #expect(policy.baseDelay(for: 2) == .seconds(4))
+        #expect(policy.baseDelay(for: 3) == .seconds(5)) // capped
+        #expect(policy.baseDelay(for: 10) == .seconds(5))
     }
 
     @Test("jitter acotado: delay ∈ [base/2, base] para todos los intentos (property)")
     func jitterBounds() {
-        let policy = RetryPolicy(maxAttempts: 5, initialDelay: 0.5, maxDelay: 16.0, multiplier: 2.0)
+        let policy = RetryPolicy(maxAttempts: 5, initialDelay: .milliseconds(500), maxDelay: .seconds(16), multiplier: 2.0)
         var generator = SystemRandomNumberGenerator()
         for attempt in 0..<8 {
             let base = policy.baseDelay(for: attempt)
@@ -37,8 +37,15 @@ struct RetryPolicyTests {
 
     @Test("delay 0 produce jitter 0")
     func zeroDelay() {
-        let policy = RetryPolicy(maxAttempts: 2, initialDelay: 0, maxDelay: 0, multiplier: 2.0)
-        #expect(policy.jitteredDelay(for: 0) == 0)
+        let policy = RetryPolicy(maxAttempts: 2, initialDelay: .zero, maxDelay: .zero, multiplier: 2.0)
+        #expect(policy.jitteredDelay(for: 0) == .zero)
+    }
+
+    @Test("default: 500ms inicial, 16s de tope (CN-11)")
+    func defaults() {
+        let policy = RetryPolicy()
+        #expect(policy.initialDelay == .milliseconds(500))
+        #expect(policy.maxDelay == .seconds(16))
     }
 }
 

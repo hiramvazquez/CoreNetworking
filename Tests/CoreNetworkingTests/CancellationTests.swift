@@ -96,7 +96,7 @@ struct CancellationTests {
     @Test("cancelar durante el backoff del retry → .cancelled sin segundo request")
     func cancelDuringBackoff() async throws {
         let host = "cancel-backoff.test"
-        let policy = RetryPolicy(maxAttempts: 2, initialDelay: 5.0, maxDelay: 5.0)
+        let policy = RetryPolicy(maxAttempts: 2, initialDelay: .seconds(5), maxDelay: .seconds(5))
         let (service, baseURL) = try makeService(host: host, policy: policy)
         MockURLProtocol.register(MockNetworkExchange(
             url: baseURL.appendingPathComponent("/slow"),

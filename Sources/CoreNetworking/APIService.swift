@@ -70,10 +70,10 @@ public final class APIService: APIServiceProtocol {
     public func execute<Request: BaseRequest, Response: Decodable>(
         request: Request
     ) async throws(APIError) -> Response {
-        let (data, _) = try await performWithRetry(request) { [session] urlRequest in
+        let (data, response, summary) = try await performWithRetry(request) { [session] urlRequest in
             try await session.data(for: urlRequest)
         }
-        return try Self.decode(Response.self, from: data, using: configuration.makeDecoder)
+        return try Self.decode(Response.self, from: data, request: summary, response: response, using: configuration.makeDecoder)
     }
 
     // MARK: - Upload
@@ -83,7 +83,7 @@ public final class APIService: APIServiceProtocol {
         data uploadData: Data,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws(APIError) -> Response {
-        let (data, _) = try await performWithRetry(request) { [session] urlRequest in
+        let (data, response, summary) = try await performWithRetry(request) { [session] urlRequest in
             // API nativa: la cancelación del Task cancela la transferencia.
             // El body va SOLO como argumento de upload (no duplicado en httpBody).
             // Delegate por-task para el progreso; los auth challenges caen al
@@ -91,7 +91,7 @@ public final class APIService: APIServiceProtocol {
             let taskDelegate = progress.map { UploadProgressDelegate(onProgress: $0) }
             return try await session.upload(for: urlRequest, from: uploadData, delegate: taskDelegate)
         }
-        return try Self.decode(Response.self, from: data, using: configuration.makeDecoder)
+        return try Self.decode(Response.self, from: data, request: summary, response: response, using: configuration.makeDecoder)
     }
 
     // MARK: - Download
@@ -104,7 +104,7 @@ public final class APIService: APIServiceProtocol {
         // método devuelve `Data` en memoria (no una URL de archivo): descargar a
         // disco para releerlo sería trabajo extra, y el stream nos da cancelación
         // nativa + progreso sin delegate.
-        let (data, _) = try await performWithRetry(request) { [session] urlRequest in
+        let (data, _, _) = try await performWithRetry(request) { [session] urlRequest in
             let (bytes, response) = try await session.bytes(for: urlRequest)
 
             let expectedLength = response.expectedContentLength
@@ -141,7 +141,7 @@ public final class APIService: APIServiceProtocol {
     private func performWithRetry<Request: BaseRequest>(
         _ request: Request,
         transport: (URLRequest) async throws -> (Data, URLResponse)
-    ) async throws(APIError) -> (data: Data, response: HTTPURLResponse) {
+    ) async throws(APIError) -> (data: Data, response: HTTPURLResponse, request: APIError.RequestSummary) {
         let methodAllowsRetry = request.method.isIdempotent || request.allowsNonIdempotentRetry
         var attemptsMade = 0
         while true {
@@ -154,14 +154,14 @@ public final class APIService: APIServiceProtocol {
                                   retryPolicy.shouldRetry(error, attemptsMade)
                 guard shouldRetry else { throw error }
 
-                let delay = error.retryAfterDelay ?? retryPolicy.jitteredDelay(for: attemptsMade - 1)
+                let delay = error.retryAfter.map(\.timeInterval) ?? retryPolicy.jitteredDelay(for: attemptsMade - 1)
                 NetLog.retry.debug(
                     "retry \(attemptsMade, privacy: .public)/\(self.retryPolicy.maxAttempts - 1, privacy: .public) en \(String(format: "%.2f", delay), privacy: .public)s — \(String(describing: error), privacy: .public)"
                 )
                 do {
                     try await Task.sleep(for: .seconds(delay))
-                } catch {
-                    throw APIError.cancelled
+                } catch let cancellation {
+                    throw APIError(code: .cancelled, request: error.request, underlying: cancellation)
                 }
             }
         }
@@ -171,27 +171,35 @@ public final class APIService: APIServiceProtocol {
     private func performOnce<Request: BaseRequest>(
         _ request: Request,
         transport: (URLRequest) async throws -> (Data, URLResponse)
-    ) async throws(APIError) -> (data: Data, response: HTTPURLResponse) {
+    ) async throws(APIError) -> (data: Data, response: HTTPURLResponse, request: APIError.RequestSummary) {
         var urlRequest = try buildURLRequest(from: request)
 
         for interceptor in interceptors {
             urlRequest = await interceptor.willSend(urlRequest)
         }
 
+        let summary = APIError.RequestSummary(urlRequest)
         let data: Data
         let response: URLResponse
         do {
             (data, response) = try await transport(urlRequest)
         } catch let urlError as URLError {
-            let apiError = APIError.map(urlError)
+            // `.cancelled` es la cancelación del llamador. El pinning que
+            // rechaza un certificado también llega como `.cancelled` desde
+            // Foundation: distinguirlo (→ `.untrustedServer`) exige el delegate
+            // por tarea de CN-04; el código ya existe para que nada lo confunda.
+            let code: APIError.Code = urlError.code == .cancelled ? .cancelled : .transport
+            let apiError = APIError(code: code, request: summary, underlying: urlError)
             await notifyInterceptorsOfFailure(urlRequest, error: apiError)
             throw apiError
-        } catch is CancellationError {
-            let apiError = APIError.cancelled
+        } catch let cancellation as CancellationError {
+            let apiError = APIError(code: .cancelled, request: summary, underlying: cancellation)
             await notifyInterceptorsOfFailure(urlRequest, error: apiError)
             throw apiError
         } catch {
-            let apiError = (error as? APIError) ?? .unknown
+            // Un APIError del transporte se respeta; cualquier otro error viaja
+            // ENTERO en `underlying`. Nunca se pierde.
+            let apiError = (error as? APIError) ?? APIError(code: .unexpected, request: summary, underlying: error)
             await notifyInterceptorsOfFailure(urlRequest, error: apiError)
             throw apiError
         }
@@ -203,31 +211,45 @@ public final class APIService: APIServiceProtocol {
         // didFail se notifica en TODOS los caminos de error del pipeline:
         // transporte (arriba), respuesta inválida y status non-2xx.
         guard let httpResponse = response as? HTTPURLResponse else {
-            let apiError = APIError.invalidResponse
+            let apiError = APIError(code: .invalidResponse, request: summary)
             await notifyInterceptorsOfFailure(urlRequest, error: apiError)
             throw apiError
         }
 
         guard (200..<300).contains(httpResponse.statusCode) else {
-            let apiError = APIError.map(data: data, response: httpResponse)
+            // Status, headers y body tal cual: el sobre de error lo decodifica
+            // el consumidor con `decodeBody`, no este paquete.
+            let apiError = APIError(
+                code: .httpStatus,
+                request: summary,
+                response: APIError.ResponseSummary(response: httpResponse, body: data)
+            )
             await notifyInterceptorsOfFailure(urlRequest, error: apiError)
             throw apiError
         }
 
-        return (data, httpResponse)
+        return (data, httpResponse, summary)
     }
 
+    /// Decodes the response body. Any failure — a `DecodingError` or anything
+    /// else the decoder throws — becomes `.decoding`; the body stays attached
+    /// via `response` so the consumer can inspect what actually came back.
     private static func decode<Response: Decodable>(
         _ type: Response.Type,
         from data: Data,
+        request: APIError.RequestSummary,
+        response: HTTPURLResponse,
         using makeDecoder: @Sendable () -> JSONDecoder
     ) throws(APIError) -> Response {
         do {
             return try makeDecoder().decode(Response.self, from: data)
-        } catch let decodingError as DecodingError {
-            throw APIError.decodingError(decodingError)
         } catch {
-            throw APIError.unknown
+            throw APIError(
+                code: .decoding,
+                request: request,
+                response: APIError.ResponseSummary(response: response, body: data),
+                underlying: error
+            )
         }
     }
 
@@ -241,7 +263,7 @@ public final class APIService: APIServiceProtocol {
             url: configuration.baseURL.appendingPathComponent(request.path),
             resolvingAgainstBaseURL: true
         ) else {
-            throw APIError.invalidURL
+            throw APIError(code: .invalidURL, request: APIError.RequestSummary(method: request.method, url: nil))
         }
 
         if let queryItems = request.queryItems, !queryItems.isEmpty {
@@ -249,7 +271,7 @@ public final class APIService: APIServiceProtocol {
         }
 
         guard let url = urlComponents.url else {
-            throw APIError.invalidURL
+            throw APIError(code: .invalidURL, request: APIError.RequestSummary(method: request.method, url: nil))
         }
 
         var urlRequest = URLRequest(url: url)
@@ -267,10 +289,13 @@ public final class APIService: APIServiceProtocol {
         if let parameters = request.parameters {
             do {
                 urlRequest.httpBody = try JSONEncoder().encode(parameters)
-            } catch let encodingError as EncodingError {
-                throw APIError.encodingError(encodingError)
             } catch {
-                throw APIError.unknown
+                // El error original (EncodingError u otro) nunca se pierde.
+                throw APIError(
+                    code: .encoding,
+                    request: APIError.RequestSummary(method: request.method, url: url),
+                    underlying: error
+                )
             }
         }
 
@@ -278,7 +303,7 @@ public final class APIService: APIServiceProtocol {
     }
 
     /// Notifies all interceptors of a request failure.
-    private func notifyInterceptorsOfFailure(_ request: URLRequest, error: Error) async {
+    private func notifyInterceptorsOfFailure(_ request: URLRequest, error: APIError) async {
         for interceptor in interceptors {
             await interceptor.didFail(request, error: error)
         }

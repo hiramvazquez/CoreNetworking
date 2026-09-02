@@ -57,6 +57,30 @@ public final class MockAPIService: APIServiceProtocol, @unchecked Sendable {
         let stubs = state.withLockUnchecked { $0 }
         if let error = stubs.error { throw error }
         if let value = stubs.result as? Value { return value }
-        throw APIError.invalidResponse
+        throw APIError(code: .invalidResponse)
+    }
+}
+
+// MARK: - APIError stub
+
+public extension APIError {
+    /// Convenience constructor for tests: builds a minimal but valid
+    /// `APIError` without going through the pipeline.
+    ///
+    /// `APIError` is deliberately not `Equatable` (see the type's doc
+    /// comment): compare `error.code`, `error.statusCode` or `error.category`
+    /// instead of the whole value.
+    static func stub(
+        code: Code,
+        statusCode: Int? = nil,
+        headers: [String: String] = [:],
+        body: Data = Data(),
+        request: RequestSummary? = nil,
+        underlying: (any Error)? = nil
+    ) -> APIError {
+        let response = statusCode.map {
+            ResponseSummary(statusCode: $0, headers: headers, body: body)
+        }
+        return APIError(code: code, request: request, response: response, underlying: underlying)
     }
 }

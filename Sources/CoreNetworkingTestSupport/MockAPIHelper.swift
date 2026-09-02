@@ -49,6 +49,20 @@ public enum MockAPIHelper {
         )
     }
 
+    /// Registers a sequence of responses for `method` + `url`, consumed in
+    /// order; the last one repeats once exhausted. Use it to simulate a
+    /// "fails then succeeds" scenario (e.g. 500, 500, 200) through the real
+    /// URL loading system — for unit tests, prefer `InMemoryTransport`.
+    public static func setupMockSequence(
+        for url: URL,
+        method: HTTPMethod = .GET,
+        responses: [MockResponse]
+    ) {
+        MockURLProtocol.register(
+            MockNetworkExchange(method: method, url: url, responses: responses)
+        )
+    }
+
     /// Removes all registered mocks and recorded requests.
     /// Call it between tests.
     public static func removeAllMocks() {

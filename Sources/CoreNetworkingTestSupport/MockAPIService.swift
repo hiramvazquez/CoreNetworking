@@ -4,38 +4,49 @@ import os
 
 /// In-memory stub of `APIServiceProtocol` for unit-testing consumers.
 ///
-/// Configure `result` (the value to return) or `error` (the `APIError` to
-/// throw) and inject it wherever an `APIServiceProtocol` is expected.
+/// Stubs are keyed by REQUEST TYPE, not by call order: `stub(_:returning:)`
+/// registers what `execute`/`upload`/`download` return for that particular
+/// `BaseRequest` type, and `stub(_:throwing:)` registers what they throw
+/// instead. This replaces a single untyped `result: Any?` — a mismatched
+/// type used to fall through to a misleading `.invalidResponse`; now the
+/// mismatch cannot happen because the stub is looked up by the exact request
+/// type being executed.
+///
+/// ## Example
+/// ```swift
+/// let mock = MockAPIService()
+/// mock.stub(GetGamesRequest.self, returning: [Game(id: 1)])
+/// mock.stub(DeleteGameRequest.self, throwing: .stub(code: .httpStatus, statusCode: 404))
+/// ```
 public final class MockAPIService: APIServiceProtocol, @unchecked Sendable {
-    // @unchecked Sendable JUSTIFICADO: el estado guarda `Any?` (no comprobable
-    // como Sendable por el compilador) y TODO acceso pasa por el lock `state`
-    // (OSAllocatedUnfairLock). No hay otra propiedad mutable.
-    private struct Stubs {
-        var result: Any?
-        var error: APIError?
+    // @unchecked Sendable JUSTIFICADO: el diccionario guarda `Any` (no
+    // comprobable como Sendable por el compilador) y TODO acceso pasa por el
+    // lock `state` (OSAllocatedUnfairLock). No hay otra propiedad mutable.
+    private struct Stub {
+        var value: Any? = nil
+        var error: APIError? = nil
     }
 
-    private let state = OSAllocatedUnfairLock(uncheckedState: Stubs())
+    private let state = OSAllocatedUnfairLock(uncheckedState: [ObjectIdentifier: Stub]())
 
     public init() {}
 
-    /// Value returned by `execute`/`upload` (must match `Response`) or by
-    /// `download` (must be `Data`).
-    public var result: Any? {
-        get { state.withLockUnchecked { $0.result } }
-        set { state.withLockUnchecked { $0.result = newValue } }
+    /// Registers the value `execute`/`upload` (matched against `Response`) or
+    /// `download` (matched against `Data`) return for requests of this type.
+    public func stub<Request: BaseRequest, Value>(_ requestType: Request.Type, returning value: Value) {
+        state.withLockUnchecked { $0[ObjectIdentifier(requestType), default: Stub()].value = value }
     }
 
-    /// Error thrown by every method when non-nil (takes precedence over `result`).
-    public var error: APIError? {
-        get { state.withLockUnchecked { $0.error } }
-        set { state.withLockUnchecked { $0.error = newValue } }
+    /// Registers the error thrown for requests of this type (takes
+    /// precedence over a `returning` stub for the same type).
+    public func stub<Request: BaseRequest>(_ requestType: Request.Type, throwing error: APIError) {
+        state.withLockUnchecked { $0[ObjectIdentifier(requestType), default: Stub()].error = error }
     }
 
     public func execute<Request: BaseRequest, Response: Decodable>(
         request: Request
     ) async throws(APIError) -> Response {
-        try stubbedValue()
+        try stubbedValue(for: Request.self)
     }
 
     public func upload<Request: BaseRequest, Response: Decodable>(
@@ -43,20 +54,22 @@ public final class MockAPIService: APIServiceProtocol, @unchecked Sendable {
         data: Data,
         progress: (@Sendable (Double) -> Void)?
     ) async throws(APIError) -> Response {
-        try stubbedValue()
+        try stubbedValue(for: Request.self)
     }
 
     public func download<Request: BaseRequest>(
         request: Request,
         progress: (@Sendable (Double) -> Void)?
     ) async throws(APIError) -> Data {
-        try stubbedValue()
+        try stubbedValue(for: Request.self)
     }
 
-    private func stubbedValue<Value>() throws(APIError) -> Value {
-        let stubs = state.withLockUnchecked { $0 }
-        if let error = stubs.error { throw error }
-        if let value = stubs.result as? Value { return value }
+    private func stubbedValue<Request: BaseRequest, Value>(for requestType: Request.Type) throws(APIError) -> Value {
+        guard let stub = state.withLockUnchecked({ $0[ObjectIdentifier(requestType)] }) else {
+            throw APIError(code: .invalidResponse)
+        }
+        if let error = stub.error { throw error }
+        if let value = stub.value as? Value { return value }
         throw APIError(code: .invalidResponse)
     }
 }

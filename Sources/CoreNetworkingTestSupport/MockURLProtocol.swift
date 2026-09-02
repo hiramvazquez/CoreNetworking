@@ -20,17 +20,24 @@ public struct MockResponse: Sendable, Equatable {
 
 // MARK: - MockNetworkExchange
 
-/// A registered mock: request matcher (method + URL) plus the outcome.
+/// A registered mock: request matcher (method + URL) plus the outcome(s).
 public struct MockNetworkExchange: Sendable {
     public let method: HTTPMethod
     public let url: URL
-    public let response: MockResponse
-    /// Transport-level failure to simulate instead of a response.
+    /// Responses consumed in order, one per matching request; the last one
+    /// repeats once exhausted (so a single-response registration behaves
+    /// exactly like before: the same mock answers any number of requests).
+    public let responses: [MockResponse]
+    /// Transport-level failure to simulate instead of a response. Applies to
+    /// every matching request (not sequenced) — for a mix of failures and
+    /// successes, use `responses` with `MockResponse(statusCode: 5xx)`
+    /// entries, or `InMemoryTransport` for unit tests.
     public let error: URLError?
     /// Optional artificial latency before delivering — useful to test
     /// cancellation. `stopLoading` cancels a pending delivery.
     public let latency: Duration?
 
+    /// Registers a single, reusable response — the common case.
     public init(
         method: HTTPMethod = .GET,
         url: URL,
@@ -38,9 +45,22 @@ public struct MockNetworkExchange: Sendable {
         error: URLError? = nil,
         latency: Duration? = nil
     ) {
+        self.init(method: method, url: url, responses: [response], error: error, latency: latency)
+    }
+
+    /// Registers a sequence of responses consumed in order (e.g. 500, 500,
+    /// 200 to test "retry that eventually succeeds" through the real URL
+    /// loading system).
+    public init(
+        method: HTTPMethod = .GET,
+        url: URL,
+        responses: [MockResponse],
+        error: URLError? = nil,
+        latency: Duration? = nil
+    ) {
         self.method = method
         self.url = url
-        self.response = response
+        self.responses = responses
         self.error = error
         self.latency = latency
     }
@@ -48,13 +68,18 @@ public struct MockNetworkExchange: Sendable {
 
 // MARK: - MockURLProtocol
 
-/// Deterministic `URLProtocol` for intercepting requests in tests.
+/// Deterministic `URLProtocol` for intercepting requests in tests, through
+/// the real URL loading system — for the few integration tests that need
+/// that (header merging, redirections, the pinning delegate). For unit tests,
+/// prefer `InMemoryTransport`: no static/global registry to fight Swift
+/// Testing's parallel execution, no "one host per test" discipline.
 ///
 /// - Registration is synchronous (no fire-and-forget tasks): once `register`
 ///   returns, the mock is visible to the next request.
 /// - Matching is by HTTP method + URL.
-/// - Responses are reusable: the same mock answers any number of requests
-///   until `removeAll()`.
+/// - Responses are consumed in order (`responses`); the last one repeats
+///   once exhausted, so a single-response registration answers any number of
+///   requests, same as before — until `removeAll()`.
 /// - Every handled request is recorded (`recordedRequests`) so tests can
 ///   assert exact request counts (retry) and headers.
 ///
@@ -77,6 +102,7 @@ public final class MockURLProtocol: URLProtocol {
 
     private struct RegistryState: Sendable {
         var exchanges: [MatchKey: MockNetworkExchange] = [:]
+        var cursors: [MatchKey: Int] = [:]
         var recorded: [URLRequest] = []
     }
 
@@ -86,10 +112,14 @@ public final class MockURLProtocol: URLProtocol {
 
     // MARK: Registration API
 
-    /// Registers a mock. Overwrites any previous mock for the same method+URL.
+    /// Registers a mock. Overwrites any previous mock for the same
+    /// method+URL and resets its cursor into `responses`.
     public static func register(_ exchange: MockNetworkExchange) {
         let key = MatchKey(method: exchange.method.rawValue, url: exchange.url)
-        registry.withLock { $0.exchanges[key] = exchange }
+        registry.withLock {
+            $0.exchanges[key] = exchange
+            $0.cursors[key] = 0
+        }
     }
 
     /// Removes all mocks and recorded requests.
@@ -120,12 +150,17 @@ public final class MockURLProtocol: URLProtocol {
         let method = request.httpMethod ?? "GET"
         let handledRequest = request
 
-        let exchange = Self.registry.withLock { state -> MockNetworkExchange? in
+        let matched = Self.registry.withLock { state -> (MockNetworkExchange, MockResponse)? in
             state.recorded.append(handledRequest)
-            return state.exchanges[MatchKey(method: method, url: url)]
+            let key = MatchKey(method: method, url: url)
+            guard let exchange = state.exchanges[key] else { return nil }
+            let index = state.cursors[key, default: 0]
+            state.cursors[key] = index + 1
+            let response = exchange.responses[min(index, exchange.responses.count - 1)]
+            return (exchange, response)
         }
 
-        guard let exchange else {
+        guard let (exchange, response) = matched else {
             client?.urlProtocol(self, didFailWithError: URLError(.resourceUnavailable))
             return
         }
@@ -140,11 +175,11 @@ public final class MockURLProtocol: URLProtocol {
             let task = Task {
                 try? await Task.sleep(for: latency)
                 guard !Task.isCancelled else { return }
-                protocolInstance.deliver(exchange)
+                protocolInstance.deliver(exchange, response: response)
             }
             pendingDelivery.withLock { $0 = task }
         } else {
-            deliver(exchange)
+            deliver(exchange, response: response)
         }
     }
 
@@ -157,7 +192,7 @@ public final class MockURLProtocol: URLProtocol {
 
     // MARK: Delivery
 
-    private func deliver(_ exchange: MockNetworkExchange) {
+    private func deliver(_ exchange: MockNetworkExchange, response: MockResponse) {
         if let error = exchange.error {
             client?.urlProtocol(self, didFailWithError: error)
             return
@@ -165,16 +200,16 @@ public final class MockURLProtocol: URLProtocol {
 
         guard let httpResponse = HTTPURLResponse(
             url: exchange.url,
-            statusCode: exchange.response.statusCode,
+            statusCode: response.statusCode,
             httpVersion: "HTTP/1.1",
-            headerFields: exchange.response.headers
+            headerFields: response.headers
         ) else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
             return
         }
 
         client?.urlProtocol(self, didReceive: httpResponse, cacheStoragePolicy: .notAllowed)
-        if let data = exchange.response.data {
+        if let data = response.data {
             client?.urlProtocol(self, didLoad: data)
         }
         client?.urlProtocolDidFinishLoading(self)

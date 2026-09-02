@@ -159,18 +159,8 @@ let service = APIService(
 
 ## SSL Pinning
 
-```swift
-let pinning = SSLPinningConfiguration(
-    publicKeyHashes: ["r/mIkG3eEpVdm+u/ko/cwxzOMo1bk4TyHIlByibiA5E="],
-    pinnedHosts: ["api.miapp.com"]
-)
-let service = APIService(configuration: configuration, sslPinning: pinning)
-```
-
-Decisión de 3 estados: host sin pin → validación TLS por defecto del sistema;
-pin válido → continúa; pin inválido o cadena rota → conexión cancelada.
-`.disabled` equivale a "sin pinning" (el sistema valida normal; nunca acepta a
-ciegas). Pin = SHA-256 del SPKI en base64 (mismo formato que TrustKit):
+Pin = SHA-256 del SPKI (SubjectPublicKeyInfo) en base64 — el mismo formato que
+usan TrustKit, HPKP y `NSPinnedDomains`:
 
 ```bash
 openssl s_client -connect api.miapp.com:443 < /dev/null \
@@ -179,7 +169,92 @@ openssl s_client -connect api.miapp.com:443 < /dev/null \
   | openssl dgst -sha256 -binary | base64
 ```
 
-Soportado: RSA-2048/4096, EC P-256/P-384.
+RFC 7469 §2.5 exige un **pin de respaldo**: una clave que ya tienes (o has
+generado) pero que el servidor todavía no sirve. Sin él, rotar la clave del
+servidor deja cada copia instalada de la app sin poder conectar hasta que
+salga una actualización. Genera el respaldo desde una clave/CSR futuros con el
+mismo comando, apuntando al `.pem` en lugar de al host:
+
+```bash
+# clave/CSR de respaldo, aún no desplegados en el servidor
+openssl pkey -in respaldo.pem -pubout -outform DER \
+  | openssl dgst -sha256 -binary | base64
+```
+
+### Pinning declarativo (recomendado): `NSPinnedDomains`
+
+Para pines estáticos, Apple ofrece pinning declarativo desde iOS 14 —
+`NSAppTransportSecurity` → `NSPinnedDomains` — sin escribir código, sin
+delegate propio, cubierto por **toda** `URLSession` del proceso (no solo la de
+este paquete) y sin poder sufrir un bug de cableado como el de
+`PinningSessionDelegate`. Va en el `Info.plist` de la app:
+
+```xml
+<key>NSAppTransportSecurity</key>
+<dict>
+    <key>NSPinnedDomains</key>
+    <dict>
+        <key>api.miapp.com</key>
+        <dict>
+            <key>NSIncludesSubdomains</key>
+            <true/>
+            <key>NSPinnedLeafIdentities</key>
+            <array>
+                <dict>
+                    <key>SPKI-SHA256-BASE64</key>
+                    <string>r/mIkG3eEpVdm+u/ko/cwxzOMo1bk4TyHIlByibiA5E=</string>
+                </dict>
+                <dict>
+                    <key>SPKI-SHA256-BASE64</key>
+                    <string>Vjs8r4z+80wjNcr1YKepWQboSIRi63WsWXhIMN+eWys=</string>
+                </dict>
+            </array>
+            <key>NSPinnedCAIdentities</key>
+            <array/>
+        </dict>
+    </dict>
+</dict>
+```
+
+`NSPinnedLeafIdentities` pinea la clave hoja (lo que hace este paquete);
+`NSPinnedCAIdentities` pinea una CA intermedia/raíz — usa uno u otro según tu
+cadena, con al menos dos entradas (clave actual + respaldo) igual que arriba.
+Basta con esto cuando los pines son estáticos y no necesitas pinear
+`WKWebView` con la misma política (`NSPinnedDomains` **no** cubre WebKit).
+
+Usa el pinning programático de abajo cuando necesites pines que se obtienen o
+rotan en remoto, o un conjunto de hosts que se decide en tiempo de ejecución
+— casos que un plist estático no puede expresar.
+
+### Pinning programático (opt-in)
+
+```swift
+let pinning = SSLPinningConfiguration(
+    publicKeyHashes: [
+        "r/mIkG3eEpVdm+u/ko/cwxzOMo1bk4TyHIlByibiA5E=",   // clave actual
+        "Vjs8r4z+80wjNcr1YKepWQboSIRi63WsWXhIMN+eWys="    // pin de respaldo (RFC 7469)
+    ],
+    hosts: .only(["api.miapp.com"])   // o .all para pinear toda la sesión
+)
+let service = APIService(configuration: configuration, sslPinning: pinning)
+```
+
+Decisión de 3 estados: host sin pin → validación TLS por defecto del sistema;
+pin válido → continúa; pin inválido o cadena rota → conexión cancelada.
+`.disabled` equivale a "sin pinning" (el sistema valida normal; nunca acepta a
+ciegas).
+
+El constructor exige (con `precondition`, pines son constantes de compilación)
+al menos 2 pines válidos — usa `SSLPinningConfiguration.validatePins(_:)`
+primero si los pines vienen de una fuente remota o no confiable, para
+convertir un payload malformado en un error manejado en vez de un crash.
+
+`chainValidation: .unsafeSkipForDevelopment` salta `SecTrustEvaluateWithError`
+para poder probar contra certificados autofirmados; solo tiene efecto en
+builds `DEBUG` — en Release degrada a `.system` con un `assertionFailure`, así
+que nunca llega a producción por accidente.
+
+Soportado en la tabla ASN.1 de SPKI: RSA-2048/3072/4096, EC P-256/P-384.
 
 ## Interceptores
 

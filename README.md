@@ -197,8 +197,11 @@ Ver la sección [Errores](#errores) para el detalle de `code`, `category` y
 ### Upload / Download
 
 ```swift
-let response: UploadResponse = try await service.upload(
-    request: UploadRequest(),
+// Igual que execute(_:): el tipo de respuesta es Request.Response, no se
+// anota en el call site. Para decodificar otra cosa, usa la sobrecarga
+// upload(_:data:as:progress:) — igual que execute(_:as:).
+let response = try await service.upload(
+    UploadRequest(),
     data: fileData,
     progress: { fraction in print(fraction) }
 )
@@ -218,14 +221,15 @@ try await service.download(
 
 Las tres usan las APIs async nativas de `URLSession` (`upload(for:from:)`,
 `data(for:)`, `download(for:)`): cancelar el `Task` cancela la transferencia.
-`upload`/`data` pasan por el mismo pipeline que `execute` (interceptores,
-retry, mapeo de errores); `download(to:)` comparte transporte y mapeo de
-errores pero es un único intento — sin retry — porque reintentar una
-descarga a disco a medias exigiría truncar o reanudar el fichero, fuera de
-alcance aquí. El progreso solo emite fracciones intermedias si el servidor
-manda `Content-Length` (siempre emite 1.0 al terminar); `download(to:)` deja
-el fichero en `to:` — sustituye uno existente — y no queda ningún temporal
-huérfano si la descarga falla o se cancela a medias.
+`upload`/`data`/`download(to:)` pasan las tres por el mismo pipeline que
+`execute` — interceptores, retry y mapeo de errores incluidos, `download(to:)`
+también: cada intento reescribe `destination` atómicamente, así que reintentar
+es válido (una descarga a medias reintenta desde cero, nunca reanuda). El
+progreso solo emite fracciones intermedias si el servidor manda
+`Content-Length` (siempre emite 1.0 al terminar); `download(to:)` deja el
+fichero en `to:` — sustituye uno existente — y no queda ningún temporal
+huérfano si la descarga falla (en ningún intento, ni tras agotar los
+reintentos) o se cancela a medias.
 
 `data(for:)` reemplaza al `download(request:progress:) -> Data` de antes de
 CN-04: mismo nombre que le sobraba a un método que en realidad devolvía todo
@@ -266,11 +270,15 @@ do {
   consumidores: no hagas `switch` exhaustivo sobre `code`, compáralo contra
   los estáticos que conoces y cae a `default`.
 - **`category`**: clasificación cerrada y de más alto nivel para
-  presentación/política — `.offline`, `.timeout`, `.unauthorized`,
-  `.forbidden`, `.notFound`, `.rateLimited`, `.client`, `.server`,
-  `.untrustedServer`, `.cancelled`, `.decoding`, `.unknown`. 401 y 403 son
-  categorías distintas (`.unauthorized` vs. `.forbidden`): la UI las trata
-  distinto (relanzar login no es lo mismo que "no tienes permiso").
+  presentación/política — `.offline`, `.timeout`, `.unreachable`,
+  `.unauthorized`, `.forbidden`, `.notFound`, `.rateLimited`, `.client`,
+  `.server`, `.untrustedServer`, `.cancelled`, `.decoding`, `.unknown`. 401 y
+  403 son categorías distintas (`.unauthorized` vs. `.forbidden`): la UI las
+  trata distinto (relanzar login no es lo mismo que "no tienes permiso").
+  `.unreachable` (`networkConnectionLost`, `cannotConnectToHost`,
+  `dnsLookupFailed`, `cannotFindHost`) es distinto de `.offline`
+  (`notConnectedToInternet` y afines): hay red, pero el servidor concreto no
+  responde — "no se pudo conectar con el servidor", no "no tienes internet".
 - **`decodeBody<T>(_:using:)`**: la app decodifica **su propio** sobre de
   error con **su propio** `JSONDecoder` — `{"message"}`, RFC 9457
   `problem+json`, errores de validación por campo, lo que sea. El paquete
@@ -672,10 +680,18 @@ MockURLProtocol.register(MockNetworkExchange(
 
 let configuration = NetworkingConfiguration(
     baseURL: URL(string: "https://unit.test")!,
-    protocolClasses: [MockURLProtocol.self]
+    sessionConfiguration: {
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [MockURLProtocol.self]
+        return sessionConfiguration
+    }
 )
 let service = APIService(configuration: configuration)
 ```
+
+`NetworkingConfiguration.protocolClasses` sigue ahí pero deprecado —
+`sessionConfiguration` es la única forma soportada de instalarlo hoy, para no
+tener dos caminos que hacen lo mismo.
 
 - Registro síncrono, matching por método+URL, `responses` consumidas en
   orden (la última se repite), `recordedRequests` para asertar
@@ -701,6 +717,14 @@ let mock = MockAPIService()
 mock.stub(GetGamesRequest.self, returning: [Game(id: 1)])
 mock.stub(DeleteGameRequest.self, throwing: .stub(code: .httpStatus, statusCode: 404))
 ```
+
+Un request sin `stub(_:returning:)`/`stub(_:throwing:)` registrado — o
+registrado con un tipo que no coincide con lo que pide el call site — lanza
+`APIError(code: .unstubbed)` en vez de `.invalidResponse` (que no venía a
+cuento: nada de la respuesta era inválido, faltaba el stub). `.unstubbed`
+vive en `CoreNetworkingTestSupport`, no en `CoreNetworking`: `APIError.Code`
+es un conjunto abierto pensado justo para esto — un código propio de tests,
+sin ensuciar el catálogo del paquete.
 
 Nada de esto viaja en el binario de producción: es un producto aparte.
 

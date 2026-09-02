@@ -203,13 +203,33 @@ let response: UploadResponse = try await service.upload(
     progress: { fraction in print(fraction) }
 )
 
-let data = try await service.download(request: DownloadRequest(), progress: nil)
+// En memoria — para respuestas pequeñas. `execute` ya cubre el caso con
+// Response tipado; usa esto cuando lo que llega no es JSON (una imagen, un PDF).
+let data = try await service.data(for: FileRequest(), progress: { fraction in print(fraction) })
+
+// A disco — para lo que no quieres tener entero en memoria. Escribe
+// directamente al fichero, nunca acumula el body como `Data`.
+try await service.download(
+    FileRequest(),
+    to: destinationURL,
+    progress: { fraction in print(fraction) }
+)
 ```
 
-Usan las APIs async nativas de `URLSession`: cancelar el `Task` cancela la
-transferencia. Ambos pasan por el mismo pipeline que `execute` (interceptores,
-retry, mapeo de errores). El progreso de download solo emite fracciones si el
-servidor manda `Content-Length` (siempre emite 1.0 al terminar).
+Las tres usan las APIs async nativas de `URLSession` (`upload(for:from:)`,
+`data(for:)`, `download(for:)`): cancelar el `Task` cancela la transferencia.
+`upload`/`data` pasan por el mismo pipeline que `execute` (interceptores,
+retry, mapeo de errores); `download(to:)` comparte transporte y mapeo de
+errores pero es un único intento — sin retry — porque reintentar una
+descarga a disco a medias exigiría truncar o reanudar el fichero, fuera de
+alcance aquí. El progreso solo emite fracciones intermedias si el servidor
+manda `Content-Length` (siempre emite 1.0 al terminar); `download(to:)` deja
+el fichero en `to:` — sustituye uno existente — y no queda ningún temporal
+huérfano si la descarga falla o se cancela a medias.
+
+`data(for:)` reemplaza al `download(request:progress:) -> Data` de antes de
+CN-04: mismo nombre que le sobraba a un método que en realidad devolvía todo
+en memoria. `download` ahora es, sin ambigüedad, "a disco".
 
 ## Errores
 
@@ -316,6 +336,42 @@ let service = APIService(
 
 ## SSL Pinning
 
+### Qué recibe la app cuando falla el pinning
+
+`APIError(code: .untrustedServer, category: .untrustedServer)` — nunca
+`.cancelled`. Antes de CN-04, cancelar el challenge de server-trust producía
+`URLError(.cancelled)`: Foundation no distingue "el pinning rechazó el
+certificado" de "el usuario canceló", y el pipeline tampoco lo hacía, así que
+un MITM detectado por pinning llegaba a la app indistinguible de que el
+usuario hubiese cancelado — el idioma habitual `if case .cancelled = error {
+return }` se lo tragaba en silencio (hallazgo crítico CN-01 de la auditoría).
+
+La corrección es un delegate **por tarea** (`TaskDelegate`, uno nuevo por cada
+`execute`/`upload`/`data`/`download`, no uno compartido a nivel de sesión):
+decide el challenge de server-trust y, si cancela por pinning, se lo guarda a
+sí mismo bajo lock (`pinningFailed`). `URLSessionTransport` lee ese flag justo
+después de que `URLError(.cancelled)` llegue y, si está activo, lo reemplaza
+por `PinningFailure` — un error interno del transporte que nunca sale del
+paquete — que `APIService` traduce a `.untrustedServer`. Una cancelación real
+del `Task` nunca activa el flag, así que sigue llegando como `.cancelled`:
+
+```swift
+do {
+    let games = try await service.execute(GetGames())
+} catch {
+    switch error.category {
+    case .untrustedServer:
+        // MITM o certificado rotado sin pin de respaldo: NUNCA se ignora
+        // como si fuera una cancelación.
+        showInsecureConnection()
+    case .cancelled:
+        return   // cancelación real del Task — seguro ignorar
+    default:
+        show(error.localizedDescription)
+    }
+}
+```
+
 Pin = SHA-256 del SPKI (SubjectPublicKeyInfo) en base64 — el mismo formato que
 usan TrustKit, HPKP y `NSPinnedDomains`:
 
@@ -343,8 +399,9 @@ openssl pkey -in respaldo.pem -pubout -outform DER \
 Para pines estáticos, Apple ofrece pinning declarativo desde iOS 14 —
 `NSAppTransportSecurity` → `NSPinnedDomains` — sin escribir código, sin
 delegate propio, cubierto por **toda** `URLSession` del proceso (no solo la de
-este paquete) y sin poder sufrir un bug de cableado como el de
-`PinningSessionDelegate`. Va en el `Info.plist` de la app:
+este paquete) y sin poder sufrir un bug de cableado como el que tenía
+`TaskDelegate` (el delegate por tarea de este paquete) antes de CN-01. Va en
+el `Info.plist` de la app:
 
 ```xml
 <key>NSAppTransportSecurity</key>
@@ -563,7 +620,10 @@ Nada de esto viaja en el binario de producción: es un producto aparte.
 Sources/CoreNetworking/
 ├── APIServiceProtocol.swift        # Contrato público (typed throws)
 ├── APIService.swift                # Pipeline: build → interceptores → transporte → status
-├── SessionDelegates.swift          # PinningSessionDelegate + UploadProgressDelegate
+├── Transport/
+│   ├── HTTPTransport.swift         # Protocolo `send`/`download` — el punto de inyección
+│   ├── URLSessionTransport.swift   # Implementación de producción (una URLSession, sin delegate propio)
+│   └── TaskDelegate.swift          # Delegate POR TAREA: pinning + progreso + `PinningFailure`
 ├── SSLPinningConfiguration.swift   # 3 estados + SPKIHasher
 ├── RetryPolicy.swift               # Backoff + jitter
 ├── APIError.swift                  # Error tipado + mapeo + Retry-After
@@ -572,5 +632,5 @@ Sources/CoreNetworking/
 ├── Logging.swift                   # os.Logger + redacción
 └── Configuration/NetworkingConfiguration.swift
 
-Sources/CoreNetworkingTestSupport/  # MockURLProtocol, MockAPIHelper, MockAPIService
+Sources/CoreNetworkingTestSupport/  # InMemoryTransport, MockURLProtocol, MockAPIHelper, MockAPIService, ManualClock
 ```

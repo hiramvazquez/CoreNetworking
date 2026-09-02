@@ -33,9 +33,11 @@ public struct RetryPolicy: Sendable {
 
     /// Custom logic to decide whether a failure should be retried.
     ///
-    /// Receives the error and the number of attempts already made
-    /// (1 = the first request just failed).
-    public let shouldRetry: @Sendable (Error, Int) -> Bool
+    /// Receives the `APIError` and the number of attempts already made
+    /// (1 = the first request just failed). Typed on purpose: the predicate
+    /// can inspect `code`, `statusCode`, `urlError` or the server body without
+    /// casting.
+    public let shouldRetry: @Sendable (APIError, Int) -> Bool
 
     /// Creates a retry policy with exponential backoff + jitter.
     ///
@@ -51,7 +53,7 @@ public struct RetryPolicy: Sendable {
         initialDelay: TimeInterval = 0.5,
         maxDelay: TimeInterval = 16.0,
         multiplier: Double = 2.0,
-        shouldRetry: @escaping @Sendable (Error, Int) -> Bool = Self.defaultShouldRetry
+        shouldRetry: @escaping @Sendable (APIError, Int) -> Bool = Self.defaultShouldRetry
     ) {
         self.maxAttempts = Swift.max(1, maxAttempts)
         self.initialDelay = initialDelay
@@ -86,8 +88,8 @@ public struct RetryPolicy: Sendable {
     }
 
     /// Default retry predicate: retry only when `APIError.isRetryable`.
-    public static func defaultShouldRetry(_ error: Error, _ attempt: Int) -> Bool {
-        (error as? APIError)?.isRetryable ?? false
+    public static func defaultShouldRetry(_ error: APIError, _ attempt: Int) -> Bool {
+        error.isRetryable
     }
 
     // MARK: - Predefined Policies
@@ -112,15 +114,6 @@ public struct RetryPolicy: Sendable {
     )
 }
 
-// MARK: - Equatable
-
-extension RetryPolicy: Equatable {
-    /// Equality over the numeric configuration; `shouldRetry` (a closure)
-    /// deliberately cannot participate.
-    public static func == (lhs: RetryPolicy, rhs: RetryPolicy) -> Bool {
-        lhs.maxAttempts == rhs.maxAttempts &&
-        lhs.initialDelay == rhs.initialDelay &&
-        lhs.maxDelay == rhs.maxDelay &&
-        lhs.multiplier == rhs.multiplier
-    }
-}
+// NOTA: RetryPolicy NO es Equatable a propósito. `shouldRetry` es un closure y
+// no puede compararse; un `==` que lo ignorase declararía iguales dos políticas
+// con predicados distintos. Compara los campos numéricos si lo necesitas.

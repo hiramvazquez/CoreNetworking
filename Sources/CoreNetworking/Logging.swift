@@ -2,8 +2,12 @@ import Foundation
 import os
 
 /// Loggers del paquete, por categoría. `print()` no es logging.
+///
+/// El subsystem cuelga del bundle de la app que consume el paquete
+/// (`com.miapp.corenetworking`) para que en Console se filtre junto al resto
+/// de sus logs; sin bundle (CLI, tests) queda `corenetworking`.
 enum NetLog {
-    static let subsystem = "CoreNetworking"
+    static let subsystem = Bundle.main.bundleIdentifier.map { "\($0).corenetworking" } ?? "corenetworking"
 
     static let network = Logger(subsystem: subsystem, category: "network")
     static let retry = Logger(subsystem: subsystem, category: "retry")

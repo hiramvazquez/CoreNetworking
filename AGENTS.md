@@ -38,11 +38,13 @@ struct LoginService: LoginServicing, EndpointService {
 
 ## Mapeo de errores
 
-Todo lo que puede fallar es un `APIError` (typed throws). Clasifica con `category`
-(`.offline`, `.unauthorized`, `.untrustedServer`, `.server`, …) en el `ErrorPresenting`
-de la app (AppFoundation), NUNCA dentro del Service. Para leer el cuerpo de un error de
-servidor con TU propio envelope, usa `error.decodeBody(MiEnvelope.self)` — este paquete
-nunca interpreta el body, solo lo conserva.
+Todo lo que puede fallar es un `APIError` (typed throws) — el Service lo propaga tal cual,
+nunca lo interpreta. Es el **Logic** que llama al Service quien clasifica con `category`
+(`.offline`, `.unauthorized`, `.untrustedServer`, `.server`, …) y lo traduce a su propio
+`XxxError: DomainError` (AppFoundation, `ARQUITECTURA-KIT-2026-09-02.md` §8, M1) — el
+`ErrorPresenting` de la app nunca ve un `APIError`, solo `DomainError`s. Para leer el
+cuerpo de un error de servidor con TU propio envelope, usa `error.decodeBody(MiEnvelope.self)`
+desde el Logic — este paquete nunca interpreta el body, solo lo conserva.
 
 ## Cómo testear un Service
 

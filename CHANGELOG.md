@@ -8,6 +8,9 @@ Todos los cambios notables de este paquete se documentan en este fichero. El for
 
 ### Documentación
 
+- Sección «App de referencia» en el README enlazando a
+  [AppStarter](https://github.com/hiramvazquez/AppStarter), la app real que consume
+  CoreNetworking y AppFoundation 1.0.x contra DummyJSON.
 - Los 13 `@Snippet(path:)` de `Documentation.docc/` (no se resolvían en el primer
   `xcodebuild docbuild` sobre DerivedData limpio) se sustituyen por bloques de código en
   línea marcados `<!-- snippet: <name> -->`, verificados contra `Snippets/` por

@@ -83,6 +83,13 @@ archinit` deja en la raíz el `AGENTS.md` con la arquitectura completa (los Serv
 [`AGENTS.md`](AGENTS.md) a la raíz del proyecto y referéncialo desde `CLAUDE.md`
 (`@AGENTS.md`): el checkout del paquete queda fuera de lo que un agente lee.
 
+## App de referencia
+
+[AppStarter](https://github.com/hiramvazquez/AppStarter) — app real sobre DummyJSON:
+login/refresh de token, lista paginada, detalle, favoritos con SwiftData, búsqueda;
+XCUITests offline con fixtures registrados; plantilla de arranque lista para clonar. Usa
+CoreNetworking a través de un `Service` por cada llamada, siguiendo `AGENTS.md`.
+
 ## Más
 
 - [`AGENTS.md`](AGENTS.md) — cómo se adopta desde un `Service` de la arquitectura

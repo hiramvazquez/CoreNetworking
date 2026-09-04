@@ -6,6 +6,65 @@ Todos los cambios notables de este paquete se documentan en este fichero. El for
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-04
+
+### Cambiado
+
+- **Mutation testing enganchado al CI** (job `mutation`): la configuración
+  `.swift-mutation-testing.yml` existía desde agosto pero nada la ejecutaba, y su umbral
+  (60/80) nunca se había comprobado contra una medición real. Ahora corre por `schedule`
+  semanal y por `workflow_dispatch` —no en cada push: cada mutante recompila y repite la
+  suite, y la corrida completa son ~13 minutos— y sube el informe como artefacto. Los otros
+  cuatro jobs llevan `if: github.event_name != 'schedule'` para que el disparo semanal no
+  repita el CI entero.
+- **El umbral pasa a ser un TRINQUETE medido, no un objetivo inventado**: 55, con el score
+  real medido en 62,2 % (79 mutantes muertos de 127). El job falla si BAJA de ahí; se sube a
+  mano cuando la suite mejore. La holgura de ~7 puntos es deliberada: el score depende de
+  cuántos mutantes agotan el `timeout` y eso depende de la velocidad de la máquina, así que
+  un trinquete clavado al valor exacto fallaría en un runner lento sin que nada hubiera
+  empeorado.
+- `Package.swift` y `Snippets/` se excluyen de la mutación: no son código de producción,
+  ningún test los ejecuta, así que sus 10 mutantes sobrevivían siempre y diluían el score
+  4,5 puntos.
+
+### Añadido
+
+- `NetworkingConfiguration.validateBaseURL(_:)` y `NetworkingConfiguration.BaseURLIssue`:
+  valida `baseURL` (scheme + host) sin trapear — mismo patrón que
+  `SSLPinningConfiguration.validatePins(_:)` — para cuando la URL venga de una fuente
+  remota o no confiable (config remota, deep link) en vez de ser una constante de build.
+  `init` sigue trapeando exactamente igual que antes (`precondition`, no `init throws`);
+  ahora construye el mensaje del `precondition` a partir del mismo `BaseURLIssue`.
+
+### Pruebas
+
+- `LoggingInterceptor` (`RequestInterceptor.swift`) — el agujero de cobertura más sensible
+  del paquete (14,6 % de líneas: prácticamente sin tests una pieza que decide qué sale a
+  un sysdiagnose): su lógica de qué se logaría se extrae a cuatro funciones puras
+  `internal` (`headersLogPayload`, `bodyLogPayload`, `failureLogFields`,
+  `elapsedMilliseconds`) — `os.Logger` no se puede interceptar desde un test de SwiftPM
+  (comprobado con `OSLogStore(scope: .currentProcessIdentifier)`: solo persiste entradas
+  `.error`/`.fault`, nunca el nivel `.debug` que usan `willSend`/`didReceive`, justo donde
+  viven headers y body) — y `LoggingRedactionTests.swift` verifica el contrato completo
+  contra ellas: `HeaderRedactor` con todos los nombres/marcadores sensibles en cualquier
+  capitalización y un header inocuo que NO se redacta; `includeHeaders` sin fuga jamás del
+  valor de un `Authorization`; `didFail` sin exponer nunca `underlying` ni el body del
+  servidor (estructuralmente, no solo por comportamiento); y el ciclo
+  `willSend→didReceive/didFail` con el mismo `context.id`, en éxito y en fallo, contra el
+  pipeline real. Cobertura de líneas: 14,6 % → 80,4 %.
+- `Transport/TaskDelegate.swift` (44,6 % → 98,0 % de líneas, medido en local — la auditoría
+  citaba 52,3 %, posiblemente antes del hotfix de hoy al gate de 2xx):
+  `TaskDelegateTests.swift` cubre el progreso de subida/descarga
+  (`didSendBodyData`/`didWriteData`/`didReceive(data:)`, incluido el caso
+  `totalBytesExpected <= 0` y el clamp a `1.0`) y el gate de 2xx de
+  `didFinishDownloadingTo` — un callback que `session.download(for:delegate:)` nunca
+  invoca en el SDK que este paquete usa, así que ningún test end-to-end lo ejercitaba:
+  éxito (mueve y sustituye), non-2xx (descarta el temporal sin tocar `destination`) y
+  `fileMoveError`. Los dobles se obtienen con descargas/peticiones reales contra un
+  servidor loopback (para conseguir una tarea con `.response` real) en vez de subclasear
+  `URLSessionTask` — su único inicializador propio está deprecado desde macOS 10.15 y el
+  paquete compila con warnings como errores.
+
 ## [1.0.1] - 2026-09-04
 
 ### Corregido

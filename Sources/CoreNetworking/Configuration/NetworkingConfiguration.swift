@@ -111,13 +111,53 @@ public struct NetworkingConfiguration: Sendable {
         return configuration
     }
 
+    // MARK: - Invariantes de `baseURL` (puro, testable sin trapear)
+
+    /// Por qué una `baseURL` no es aceptable. Ver ``validateBaseURL(_:)``.
+    public enum BaseURLIssue: Sendable, Equatable, CustomStringConvertible {
+        /// La URL no tiene `scheme` (p. ej. viene de un string sin `https://`).
+        case missingScheme
+        /// La URL no tiene `host` (p. ej. `file:///etc/hosts`, o una URL con
+        /// scheme pero sin autoridad).
+        case missingHost
+
+        public var description: String {
+            switch self {
+            case .missingScheme:
+                "NetworkingConfiguration: baseURL sin scheme — debe incluir uno, "
+                    + "p. ej. https://api.example.com"
+            case .missingHost:
+                "NetworkingConfiguration: baseURL sin host — debe incluir uno, "
+                    + "p. ej. https://api.example.com"
+            }
+        }
+    }
+
+    /// Comprueba `baseURL` contra la misma invariante que exige `init`
+    /// (scheme y host), sin trapear. `nil` significa que la URL es aceptable.
+    ///
+    /// Úsalo ANTES de `init` cuando la URL venga de una fuente remota o no
+    /// confiable (config remota, deep link, valor introducido por la
+    /// persona usuaria) — ahí una URL rota es un input de runtime que hay
+    /// que manejar, no un error de programación que deba tirar la app abajo.
+    /// Para una `baseURL` constante conocida en tiempo de compilación, sigue
+    /// siendo preferible dejar que `init` trapee: un typo ahí es un bug, y
+    /// cuanto antes falle, mejor.
+    public static func validateBaseURL(_ baseURL: URL) -> BaseURLIssue? {
+        guard baseURL.scheme != nil else { return .missingScheme }
+        guard baseURL.host != nil else { return .missingHost }
+        return nil
+    }
+
     /// Crea una configuración de red.
     ///
-    /// - Precondition: `baseURL` debe tener scheme y host. Se valida con
-    ///   `precondition` (y no con `init throws`) porque una URL base rota es un
-    ///   error de programación detectable en el arranque, no un input de runtime
-    ///   recuperable: preferimos el crash inmediato con mensaje claro al fallback
-    ///   silencioso que existía antes (example.com).
+    /// - Precondition: `baseURL` pasa ``validateBaseURL(_:)`` — debe tener
+    ///   scheme y host. Se valida con `precondition` (y no con `init throws`)
+    ///   porque una URL base rota es un error de programación detectable en
+    ///   el arranque, no un input de runtime recuperable: preferimos el
+    ///   crash inmediato con mensaje claro al fallback silencioso que
+    ///   existía antes (example.com). Si `baseURL` viene de una fuente
+    ///   remota o no confiable, usa ``validateBaseURL(_:)`` primero.
     public init(
         baseURL: URL,
         defaultHeaders: [String: String] = [:],
@@ -127,9 +167,13 @@ public struct NetworkingConfiguration: Sendable {
         sessionConfiguration: @escaping @Sendable () -> URLSessionConfiguration = NetworkingConfiguration
             .defaultSessionConfiguration
     ) {
+        // El mensaje se construye a partir del mismo `BaseURLIssue` que
+        // `validateBaseURL(_:)` expone — una sola fuente de verdad para "qué
+        // está mal", trapee o no.
         precondition(
-            baseURL.scheme != nil && baseURL.host != nil,
-            "NetworkingConfiguration: baseURL inválida ('\(baseURL)') — debe incluir scheme y host, p. ej. https://api.example.com"
+            Self.validateBaseURL(baseURL) == nil,
+            "NetworkingConfiguration: baseURL inválida ('\(baseURL)') — "
+                + (Self.validateBaseURL(baseURL)?.description ?? "")
         )
         self.baseURL = baseURL
         self.defaultHeaders = defaultHeaders

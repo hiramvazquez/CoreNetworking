@@ -167,15 +167,12 @@ public struct LoggingInterceptor: RequestInterceptor {
             "→ [\(context.id.uuidString, privacy: .public)] \(method, privacy: .public) \(url, privacy: .private)"
         )
 
-        if includeHeaders, let headers = request.allHTTPHeaderFields, !headers.isEmpty {
-            let redacted = HeaderRedactor.redact(headers)
+        if let redacted = Self.headersLogPayload(from: request, includeHeaders: includeHeaders) {
             NetLog.network.debug("   headers: \(redacted, privacy: .private)")
         }
 
         #if DEBUG
-        if includeBody, let body = request.httpBody,
-            let text = String(data: body, encoding: .utf8)
-        {
+        if let text = Self.bodyLogPayload(request.httpBody, includeBody: includeBody) {
             NetLog.network.debug("   body: \(text, privacy: .private)")
         }
         #endif
@@ -191,7 +188,7 @@ public struct LoggingInterceptor: RequestInterceptor {
         )
 
         #if DEBUG
-        if includeBody, let text = String(data: data, encoding: .utf8) {
+        if let text = Self.bodyLogPayload(data, includeBody: includeBody) {
             NetLog.network.debug("   body: \(text, privacy: .private)")
         }
         #endif
@@ -200,15 +197,63 @@ public struct LoggingInterceptor: RequestInterceptor {
     public func didFail(_ error: APIError, context: RequestContext) async {
         // Solo `code` y `statusCode` son públicos: ni el body ni `underlying`
         // salen con `.public` (pueden llevar texto del servidor o del error).
-        let status = error.statusCode.map(String.init) ?? "-"
-        let elapsedMS = Self.elapsedMilliseconds(since: context.startedAt)
+        let fields = Self.failureLogFields(
+            error,
+            elapsedMilliseconds: Self.elapsedMilliseconds(since: context.startedAt)
+        )
         NetLog.network.error(
-            "✗ [\(context.id.uuidString, privacy: .public)] code: \(error.code.rawValue, privacy: .public) status: \(status, privacy: .public) \(elapsedMS, privacy: .public)ms"
+            "✗ [\(context.id.uuidString, privacy: .public)] code: \(fields.code, privacy: .public) status: \(fields.status, privacy: .public) \(fields.elapsedMS, privacy: .public)ms"
         )
     }
 
-    private static func elapsedMilliseconds(since start: ContinuousClock.Instant) -> Int {
-        let elapsed = ContinuousClock.now - start
+    // MARK: - Testable core (pure, `internal`)
+    //
+    // `os.Logger` no se puede interceptar desde un test de SwiftPM (verificado:
+    // `OSLogStore(scope: .currentProcessIdentifier)` solo devuelve entradas de
+    // nivel `.error`/`.fault` — las de `.debug` de `willSend`/`didReceive`, que
+    // son justo las que llevan headers/body, NUNCA se persisten por defecto).
+    // Las funciones de abajo aíslan la decisión "qué se loguearía" de la
+    // llamada real a `Logger`, para que los tests verifiquen el contrato de
+    // privacidad invocándolas directamente — cada método público de arriba es
+    // un one-liner que las llama y pasa el resultado a `Logger` sin tocarlo,
+    // así que verificar la función es verificar el dato real que sale.
+
+    /// Lo que `willSend` logaría para los headers, o `nil` si no hay nada que
+    /// logar (opt-out, o el request no trae headers). SIEMPRE pasa por
+    /// `HeaderRedactor.redact` — no hay forma de que un `Authorization`
+    /// llegue aquí sin redactar.
+    static func headersLogPayload(from request: URLRequest, includeHeaders: Bool) -> [String: String]? {
+        guard includeHeaders, let headers = request.allHTTPHeaderFields, !headers.isEmpty else { return nil }
+        return HeaderRedactor.redact(headers)
+    }
+
+    /// Lo que `willSend`/`didReceive` logarían para un body, o `nil`. Solo
+    /// codifica "opt-in + decodable como UTF-8" — el gate de `#if DEBUG` sigue
+    /// en la llamada (arriba), porque una función pura no puede reproducir un
+    /// flag de compilación: eso se verifica leyendo el `#if DEBUG` de una
+    /// línea que envuelve la única llamada a esta función, y en
+    /// `LoggingRedactionTests` con una build `-c release` (ver su comentario).
+    static func bodyLogPayload(_ body: Data?, includeBody: Bool) -> String? {
+        guard includeBody, let body, let text = String(data: body, encoding: .utf8) else { return nil }
+        return text
+    }
+
+    /// Los campos que `didFail` logaría. La firma NO recibe `error.underlying`
+    /// ni el body del servidor — es estructuralmente imposible que esta
+    /// función emita cualquiera de los dos, con independencia de lo que
+    /// `underlying` contenga.
+    static func failureLogFields(
+        _ error: APIError,
+        elapsedMilliseconds: Int
+    ) -> (code: String, status: String, elapsedMS: Int) {
+        (error.code.rawValue, error.statusCode.map(String.init) ?? "-", elapsedMilliseconds)
+    }
+
+    /// `now` es un parámetro (no siempre `.now`) para que los tests midan de
+    /// forma determinista, sin `sleep`: `ContinuousClock.Instant` soporta
+    /// `advanced(by:)`, así que un test construye `start` y `now` a mano.
+    static func elapsedMilliseconds(since start: ContinuousClock.Instant, now: ContinuousClock.Instant = .now) -> Int {
+        let elapsed = now - start
         return Int((elapsed.timeInterval * 1000).rounded())
     }
 }

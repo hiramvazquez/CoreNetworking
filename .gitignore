@@ -5,3 +5,4 @@
 mutation-report.json
 mutation-report.html
 sonar-mutation-report.json
+*.profraw

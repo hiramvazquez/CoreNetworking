@@ -1,7 +1,19 @@
 # CI de CoreNetworking (repositorio del paquete, publicado desde el monorepo spm-pro por
-# `git subtree split`). Cuatro comprobaciones: lint estricto, build con warnings como
-# errores + tests en macOS + build iOS Simulator, ejemplo `Examples/APIClientApp`, y DocC
-# (snippets sincronizados + docbuild sin warnings).
+# `git subtree split`). Cuatro comprobaciones en cada push/PR: lint estricto, build con
+# warnings como errores + tests en macOS + build iOS Simulator, ejemplo
+# `Examples/APIClientApp`, y DocC (snippets sincronizados + docbuild sin warnings).
+#
+# - `mutation`: mutation testing con `swift-mutation-testing` (config en
+#   `.swift-mutation-testing.yml`) — NO corre en cada push/PR, solo por `schedule` (semanal)
+#   o a mano (`workflow_dispatch`): cada mutante recompila y repite la suite, así que la
+#   corrida completa tarda minutos por decenas de mutantes, demasiado para el bucle normal
+#   de PR. El umbral en `.swift-mutation-testing.yml` es un TRINQUETE fijado al score medido
+#   la última vez que se corrió a propósito (no un objetivo aspiracional): el job falla si
+#   el score BAJA de ahí, y el umbral se sube a mano cuando la suite mejora de verdad. El
+#   informe (JSON + HTML) sube como artefacto del job para poder mirarlo sin volver a
+#   correr nada. Los otros cuatro jobs llevan `if: github.event_name != 'schedule'` para que
+#   el disparo semanal solo corra `mutation` (si no, se repetiría el CI completo cada
+#   semana sin que nadie lo haya pedido).
 name: CI
 
 on:
@@ -9,6 +21,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Lunes 06:00 UTC. `workflow_dispatch` de arriba permite lanzarlo a mano sin esperar.
+    - cron: '0 6 * * 1'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -20,6 +35,7 @@ permissions:
 jobs:
   lint:
     name: swift format lint
+    if: github.event_name != 'schedule'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +46,7 @@ jobs:
 
   test:
     name: build + test
+    if: github.event_name != 'schedule'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +62,7 @@ jobs:
 
   example:
     name: Examples/APIClientApp
+    if: github.event_name != 'schedule'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -56,6 +74,7 @@ jobs:
 
   docs:
     name: DocC
+    if: github.event_name != 'schedule'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -73,3 +92,59 @@ jobs:
             echo "$log" | grep -q "BUILD DOCUMENTATION SUCCEEDED" || exit 1
             ! echo "$log" | grep -qE "warning:|error:"
           done
+
+  mutation:
+    name: Mutation testing (swift-mutation-testing)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Instalar swift-mutation-testing
+        run: brew install ericodx/tools/swift-mutation-testing
+
+      - name: Cache de mutantes (evita re-testear mutantes sin cambios en Sources/Tests)
+        uses: actions/cache@v4
+        with:
+          path: .swift-mutation-testing-cache
+          key: mutation-${{ runner.os }}-${{ hashFiles('Sources/**/*.swift', 'Tests/**/*.swift') }}
+          restore-keys: mutation-${{ runner.os }}-
+
+      - name: swift-mutation-testing (config en .swift-mutation-testing.yml)
+        run: |
+          set -o pipefail
+          swift-mutation-testing . --html-output mutation-report.html | tee mutation-run.log
+
+      - name: Comprobar el trinquete (thresholds.low de .swift-mutation-testing.yml)
+        run: |
+          # "Overall mutation score: NN.N%" lo imprime la propia herramienta con SU fórmula
+          # (killed / (killed + survived + timeouts + noCoverage) × 100, unviable excluido) —
+          # se lee de ahí en vez de recalcularla para no duplicar esa lógica. El propio CLI
+          # no lee `thresholds:` del YAML (solo lo escribe, con 80/60 fijos, en el JSON de
+          # salida) — el trinquete de verdad es este paso, comparando contra el número que
+          # documenta `.swift-mutation-testing.yml`.
+          score=$(grep -oE "Overall mutation score: [0-9.]+" mutation-run.log | grep -oE "[0-9.]+$")
+          [ -n "$score" ] || { echo "::error::No se encontró la línea 'Overall mutation score:' en la salida"; exit 1; }
+          # awk, no PyYAML (no viene instalado por defecto en el runner): el fichero es
+          # sencillo, "thresholds:" seguido de "high:"/"low:" con dos espacios de indentación.
+          low=$(awk '/^thresholds:/{f=1; next} f && /low:/{print $2; exit}' .swift-mutation-testing.yml)
+          [ -n "$low" ] || { echo "::error::No se encontró thresholds.low en .swift-mutation-testing.yml"; exit 1; }
+          echo "Score: $score % · trinquete (thresholds.low): $low %"
+          echo "### Mutation testing: $score % (trinquete: $low %)" >> "$GITHUB_STEP_SUMMARY"
+          awk -v s="$score" -v l="$low" 'BEGIN { exit !(s+0 >= l+0) }' \
+            || { echo "::error::El score de mutation testing ($score%) bajó del trinquete ($low%)"; exit 1; }
+
+      - name: Subir informe
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: |
+            mutation-report.json
+            mutation-report.html
+            mutation-run.log
+          if-no-files-found: warn

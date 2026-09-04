@@ -15,9 +15,32 @@ output: mutation-report.json
 # html-output: mutation-report.html
 # sonar-output: sonar-mutation-report.json
 
+# TRINQUETE, no objetivo: "low" es el score medido la última vez que se corrió esta
+# configuración a propósito sobre main (ver CHANGELOG.md e historial de este fichero) — no
+# un umbral aspiracional elegido de antemano. El job `mutation` de
+# `.github/workflows/ci.yml` falla si el score BAJA de "low"; se sube a mano cuando la
+# suite mejora de verdad, nunca al revés. El CLI no lee estos dos números (los escribe con
+# 80/60 fijos en el JSON de salida, para SonarQube/Stryker); el trinquete real vive en ese
+# paso de CI, que sí los lee de aquí.
+thresholds:
+  high: 80
+  # Medido el 2026-09-04 sobre `main`: 62,2 % (79 muertos de 127 mutantes de produccion;
+  # la herramienta cuenta `Crash` como muerto y `Timeout` como NO muerto). Se fija en 55
+  # y no en 62 a proposito: el score depende de cuantos mutantes agotan el `timeout`, y eso
+  # depende de la velocidad de la maquina — un trinquete clavado al valor exacto medido en
+  # local haria fallar el CI en un runner mas lento sin que la suite haya empeorado en nada.
+  # Los ~7 puntos de holgura absorben esa varianza; una regresion de verdad la sigue cazando.
+  # Subelo a mano cuando la suite mejore, nunca al reves.
+  low: 55
+
 # Source file glob patterns to exclude from mutation
 exclude:
   - "/CoreNetworkingTests/"
+  # Ni `Package.swift` ni los `Snippets/` son codigo de produccion: ningun test los
+  # ejecuta, asi que sus mutantes SIEMPRE sobreviven y solo diluyen el score (10 mutantes,
+  # 0 muertos, 4,5 puntos de score falso).
+  - "/Snippets/"
+  - "Package.swift"
   # Los mocks son andamio de tests, no codigo de produccion: mutarlos no dice
   # nada sobre si la suite verifica algo, y solo gasta tiempo de build.
   - "/CoreNetworkingTestSupport/"

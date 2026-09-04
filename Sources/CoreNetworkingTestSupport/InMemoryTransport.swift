@@ -7,9 +7,16 @@ import Foundation
 /// Unlike `MockURLProtocol` (a static, process-wide registry that fights
 /// Swift Testing's parallel execution), each `InMemoryTransport` is a fresh
 /// instance owned by one test: no cross-test contamination, no "one host per
-/// test" discipline needed. It also supports SEQUENCES of responses per
-/// request (500 → 500 → 200), which `MockURLProtocol` cannot — the exact gap
-/// that used to make "retry that eventually succeeds" untestable.
+/// test" discipline needed — the 22 distinct fake hostnames the `MockURLProtocol`
+/// tests had to invent exist only to keep that global registry from colliding
+/// under parallel execution.
+///
+/// Both types sequence responses (`MockNetworkExchange.responses` does too), but
+/// only this one sequences OUTCOMES: `Outcome` is `.response` OR `.failure`, so a
+/// transport error can be followed by a success (timeout → 200).
+/// `MockNetworkExchange.error` applies to every matching request and is not
+/// sequenced, so "retry after a timeout that then succeeds" is only expressible
+/// here.
 ///
 /// `actor`, not a lock-guarded class: the state (registered exchanges,
 /// recorded requests) is genuinely shared mutable state between the test and

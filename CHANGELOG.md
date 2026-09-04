@@ -6,6 +6,24 @@ Todos los cambios notables de este paquete se documentan en este fichero. El for
 
 ## [Unreleased]
 
+### Corregido
+
+- `download(_:to:)`: un intento fallido ya no puede pisar ni borrar un fichero
+  preexistente en `destination` que no hubiéramos escrito nosotros. Había dos fallos
+  encadenados: (1) `HTTPTransport.download` (`URLSessionTransport` e `InMemoryTransport`)
+  movía a `destination` el cuerpo de CUALQUIER respuesta, incluido un status de error
+  (404, 500...) cuyo body es un mensaje de error del servidor, no el contenido pedido; (2)
+  el `catch` de `APIService.download` borraba `destination` incondicionalmente al final,
+  así que incluso un fichero ajeno que sobrevivía a (1) intacto (p. ej. porque falló por
+  timeout antes de que el transporte llegara a tocar nada) se perdía igual. Pérdida de
+  datos silenciosa, confirmada empíricamente: un fichero escrito en `destination` antes de
+  llamar a `download` desaparecía si el primer (único) intento fallaba. Ahora el
+  transporte solo mueve/escribe a `destination` en una respuesta 2xx — un status de error
+  o un fallo de transporte deja `destination` completamente intacto, sin excepción — y
+  `APIService.download` registra si `destination` existía antes del primer intento para
+  no borrarlo nunca en el `catch` si ya estaba ahí. Un fichero preexistente ajeno
+  sobrevive, contenido incluido, a un `download` fallido por cualquier motivo.
+
 ### Documentación
 
 - Sección «App de referencia» en el README enlazando a

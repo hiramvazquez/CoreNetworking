@@ -363,8 +363,9 @@ struct TransferTests {
 
     /// CN-07: `download(_:to:)` pasa por `performWithRetry`, el mismo
     /// pipeline que `execute`/`upload`/`data` — ya no es un único intento.
-    /// `InMemoryTransport` escribe `destination` en CADA intento (atómico),
-    /// así que el 500 inicial deja un fichero que el 200 siguiente sobrescribe.
+    /// `InMemoryTransport` solo escribe `destination` en un 2xx (ver su doc
+    /// comment): el 500 inicial no toca `destination` en absoluto, y es el
+    /// 200 siguiente el que la escribe.
     @Test("download(to:) reintenta: secuencia [500, 200] en InMemoryTransport deja el fichero correcto tras 2 requests")
     func downloadRetriesThroughFailureSequenceThenSucceeds() async throws {
         let transport = InMemoryTransport()
@@ -413,5 +414,81 @@ struct TransferTests {
 
         let written = try Data(contentsOf: destination)
         #expect(written == payload)
+    }
+
+    /// Regresión: el `catch` de `download` borraba `destination`
+    /// incondicionalmente, incluso cuando el fichero de ahí no lo habíamos
+    /// escrito nosotros (lo puso el consumidor antes de llamar a
+    /// `download`). Con `retryPolicy: .noRetry` y un primer (único) intento
+    /// que falla con 500, el transporte nunca llega a tocar `destination` —
+    /// pero el código viejo lo borraba igual. Verificado en rojo antes del
+    /// arreglo: el contenido preexistente desaparecía.
+    @Test("download(to:) fallido por status non-2xx conserva un fichero preexistente en destination")
+    func downloadHTTPErrorPreservesPreexistingFile() async throws {
+        let transport = InMemoryTransport()
+        let baseURL = URL(string: "https://xfer-download-preexisting-http.test")!
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: baseURL.appendingPathComponent("/file"),
+                response: .response(status: 500, body: Data("server error".utf8))
+            )
+        )
+        let configuration = NetworkingConfiguration(baseURL: baseURL)
+        let service = APIService(configuration: configuration, transport: transport, retryPolicy: .noRetry)
+
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cn-download-preexisting-http-\(UUID().uuidString).bin")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let originalContent = Data("contenido que NO debe perderse".utf8)
+        try originalContent.write(to: destination)
+
+        do {
+            try await service.download(FileRequest(), to: destination, progress: nil)
+            Issue.record("debía fallar con 500")
+        } catch {
+            #expect(error.code == .httpStatus)
+        }
+
+        #expect(
+            FileManager.default.fileExists(atPath: destination.path),
+            "un fichero preexistente ajeno no debe desaparecer aunque el download falle"
+        )
+        let survivingContent = try Data(contentsOf: destination)
+        #expect(survivingContent == originalContent, "el contenido preexistente debe quedar intacto")
+    }
+
+    /// Misma regresión que el test anterior, pero por fallo de transporte
+    /// (p. ej. timeout) en vez de un status HTTP no-2xx — `InMemoryTransport`
+    /// nunca llega a escribir nada en `destination` en ninguno de los dos
+    /// casos, así que el comportamiento esperado es idéntico.
+    @Test("download(to:) fallido por error de transporte conserva un fichero preexistente en destination")
+    func downloadTransportErrorPreservesPreexistingFile() async throws {
+        let transport = InMemoryTransport()
+        let baseURL = URL(string: "https://xfer-download-preexisting-transport.test")!
+        await transport.register(
+            InMemoryTransport.Exchange(
+                url: baseURL.appendingPathComponent("/file"),
+                response: .failure(URLError(.timedOut))
+            )
+        )
+        let configuration = NetworkingConfiguration(baseURL: baseURL)
+        let service = APIService(configuration: configuration, transport: transport, retryPolicy: .noRetry)
+
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cn-download-preexisting-transport-\(UUID().uuidString).bin")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let originalContent = Data("contenido que NO debe perderse".utf8)
+        try originalContent.write(to: destination)
+
+        await #expect(throws: APIError.self) {
+            try await service.download(FileRequest(), to: destination, progress: nil)
+        }
+
+        #expect(
+            FileManager.default.fileExists(atPath: destination.path),
+            "un fichero preexistente ajeno no debe desaparecer aunque el download falle"
+        )
+        let survivingContent = try Data(contentsOf: destination)
+        #expect(survivingContent == originalContent, "el contenido preexistente debe quedar intacto")
     }
 }

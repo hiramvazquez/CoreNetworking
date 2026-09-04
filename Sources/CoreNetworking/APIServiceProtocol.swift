@@ -91,9 +91,11 @@ public protocol APIServiceProtocol: Sendable {
     /// Streams `request`'s response body straight to `destination` on disk —
     /// no matter its size, it is never held in memory as `Data`.
     ///
-    /// Cancelling the surrounding `Task` cancels the transfer; no file is
-    /// left at `destination` if the download does not complete. Any existing
-    /// file at `destination` is replaced on success.
+    /// Cancelling the surrounding `Task` cancels the transfer; no file WE
+    /// wrote is left at `destination` if the download does not complete. Any
+    /// existing file at `destination` is replaced on success — but if it is
+    /// still there when every attempt fails, it is a file the caller put
+    /// there before this call, not ours, and it is left untouched.
     ///
     /// - Parameters:
     ///   - request: The request to execute.

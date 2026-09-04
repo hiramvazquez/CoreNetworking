@@ -167,12 +167,27 @@ final class TaskDelegate: NSObject, URLSessionTaskDelegate, URLSessionDataDelega
         // Si esto llega a dispararse (no lo hace con `download(for:delegate:)`
         // en el SDK verificado, ver el doc del tipo), el temporal se borra en
         // cuanto el callback vuelve: hay que moverlo AHORA, síncronamente.
+        //
+        // Mismo gate de 2xx que `URLSessionTransport.download`: un status de
+        // error no debe pisar `destination` con el mensaje de error del
+        // servidor. `downloadTask.response` es lo único disponible aquí (no
+        // hay `httpResponse` calculada en este callback).
+        let isSuccess: Bool
+        if let httpResponse = downloadTask.response as? HTTPURLResponse {
+            isSuccess = (200..<300).contains(httpResponse.statusCode)
+        } else {
+            isSuccess = false
+        }
         do {
             let fileManager = FileManager.default
-            if fileManager.fileExists(atPath: destination.path) {
-                try fileManager.removeItem(at: destination)
+            if isSuccess {
+                if fileManager.fileExists(atPath: destination.path) {
+                    try fileManager.removeItem(at: destination)
+                }
+                try fileManager.moveItem(at: location, to: destination)
+            } else {
+                try? fileManager.removeItem(at: location)
             }
-            try fileManager.moveItem(at: location, to: destination)
             state.withLock { $0.didMoveFile = true }
         } catch {
             state.withLock { $0.fileMoveError = error }

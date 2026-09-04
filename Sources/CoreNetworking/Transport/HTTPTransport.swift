@@ -28,9 +28,14 @@ public protocol HTTPTransport: Sendable {
     /// - Parameters:
     ///   - request: The request to send, already fully formed (method,
     ///     headers, body).
-    ///   - destination: Where to move the downloaded file. Any existing file
-    ///     at this URL is replaced. The implementation is responsible for
-    ///     leaving no orphaned temporary file behind, on success OR failure.
+    ///   - destination: Where to move the downloaded file, but ONLY on a 2xx
+    ///     response — a non-2xx response's body is a server error message,
+    ///     not the content the caller asked for, so it must never be written
+    ///     to `destination`. Any existing file at this URL is replaced on
+    ///     2xx; left completely untouched otherwise (including when the
+    ///     transport throws before a response is even received). The
+    ///     implementation is responsible for leaving no orphaned temporary
+    ///     file behind, on success OR failure.
     ///   - progress: Optional download progress callback. `onUpload` is
     ///     ignored (a download has no request body to report).
     /// - Throws: Same contract as `send`.

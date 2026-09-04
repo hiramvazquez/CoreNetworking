@@ -85,6 +85,12 @@ public final class URLSessionTransport: HTTPTransport {
             if let fileMoveError = taskDelegate.fileMoveError {
                 throw fileMoveError
             }
+            guard let httpResponse = response as? HTTPURLResponse else {
+                // Ni siquiera hay status que consultar para decidir si mover
+                // el temporal: se descarta, `destination` no se toca.
+                try? FileManager.default.removeItem(at: temporaryLocation)
+                throw URLError(.badServerResponse)
+            }
             // Verificado empíricamente: `session.download(for:delegate:)` (la
             // API async de conveniencia) NUNCA invoca
             // `URLSessionDownloadDelegate.didFinishDownloadingTo` en el SDK
@@ -92,19 +98,26 @@ public final class URLSessionTransport: HTTPTransport {
             // reanuda aquí, así que el movimiento ocurre en este punto, no en
             // el delegate. `taskDelegate.didMoveFile` cubre el caso contrario
             // (una plataforma que sí entregue el callback primero): si ya
-            // movió el fichero, no se intenta mover un temporal que ya no
-            // existe.
+            // movió (o descartó) el fichero, no se vuelve a tocar un temporal
+            // que ya no existe.
             if !taskDelegate.didMoveFile {
                 let fileManager = FileManager.default
-                if fileManager.fileExists(atPath: destination.path) {
-                    try fileManager.removeItem(at: destination)
+                // Solo se mueve el temporal a `destination` en 2xx: un status
+                // de error trae como cuerpo un mensaje de error del servidor,
+                // no el contenido que pidió el llamador, así que no debe
+                // pisar lo que hubiera (o no) en `destination` — ver
+                // `HTTPTransport.download` y el bug que motivó esto
+                // (`CHANGELOG.md`, "Corregido").
+                if (200..<300).contains(httpResponse.statusCode) {
+                    if fileManager.fileExists(atPath: destination.path) {
+                        try fileManager.removeItem(at: destination)
+                    }
+                    try fileManager.moveItem(at: temporaryLocation, to: destination)
+                } else {
+                    try? fileManager.removeItem(at: temporaryLocation)
                 }
-                try fileManager.moveItem(at: temporaryLocation, to: destination)
             }
             progress?.onDownload?(1.0)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw URLError(.badServerResponse)
-            }
             return httpResponse
         } catch {
             throw Self.remapPinningCancellation(

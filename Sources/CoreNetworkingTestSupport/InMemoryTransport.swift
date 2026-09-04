@@ -128,13 +128,23 @@ public actor InMemoryTransport: HTTPTransport {
     /// `destination` instead of returning it — every outcome (including
     /// `.pinningFailure`, latency and response sequences) behaves exactly
     /// the same for `download` as for `send`.
+    ///
+    /// `destination` is only written on a 2xx response: a non-2xx status
+    /// means the body is a server error message, not the content the caller
+    /// asked for, so it is discarded here instead of overwriting whatever
+    /// was (or wasn't) already at `destination`. This mirrors
+    /// `URLSessionTransport.download`, which applies the same 2xx gate
+    /// before moving its temp file — `HTTPTransport.download`'s contract is
+    /// "never touch `destination` except with a good body".
     public func download(
         _ request: URLRequest,
         to destination: URL,
         progress: TransferProgress?
     ) async throws -> HTTPURLResponse {
         let (data, response) = try await send(request, progress: progress)
-        try data.write(to: destination, options: .atomic)
+        if (200..<300).contains(response.statusCode) {
+            try data.write(to: destination, options: .atomic)
+        }
         return response
     }
 }

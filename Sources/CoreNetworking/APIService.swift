@@ -218,17 +218,32 @@ public final class APIService: APIServiceProtocol {
     /// interceptors' `didReceive` already only ever saw `Data()` here — the
     /// real bytes never held in memory).
     ///
-    /// Retry is valid because `HTTPTransport.download` writes `destination`
-    /// atomically on every attempt: a failed attempt's error body (if the
-    /// transport got that far) is what a subsequent successful attempt
-    /// overwrites, or what gets cleaned up below if every attempt fails. A
-    /// `download` that failed partway through therefore always retries from
-    /// scratch, never resumes.
+    /// Retry is valid because `HTTPTransport.download` only ever touches
+    /// `destination` on a 2xx response (see its doc comment): a failed
+    /// attempt — non-2xx status OR a transport-level failure that never even
+    /// got a response — leaves `destination` exactly as it was before that
+    /// attempt. A `download` that failed partway through therefore always
+    /// retries from scratch, never resumes, and `destination` is written
+    /// exactly once, by whichever attempt finally succeeds.
+    ///
+    /// If every attempt fails, `destination` was consequently never touched
+    /// by any of them, so there is nothing of ours to clean up — a caller's
+    /// own preexisting file there (if any) survives untouched. The `catch`
+    /// below still removes `destination` when it did NOT already hold a file
+    /// before this call, purely as a defensive backstop against a
+    /// non-compliant `HTTPTransport` (a third-party conformer that doesn't
+    /// honor the 2xx-gate contract): it only ever removes something that
+    /// wasn't there before we started, never a preexisting file.
     public func download<Request: BaseRequest>(
         _ request: Request,
         to destination: URL,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws(APIError) {
+        // Capturado ANTES del primer intento: ver el párrafo de arriba sobre
+        // por qué el `catch` solo borra cuando esto es `false` (bug
+        // confirmado empíricamente antes del arreglo — ver TransferTests y
+        // CHANGELOG.md, "Corregido").
+        let existedBefore = FileManager.default.fileExists(atPath: destination.path)
         do {
             _ = try await performWithRetry(request) { [transport] urlRequest in
                 let transferProgress = progress.map { TransferProgress(onDownload: $0) }
@@ -236,13 +251,14 @@ public final class APIService: APIServiceProtocol {
                 return (Data(), response)
             }
         } catch {
-            // El transporte ya movió a `destination` lo que llegó (el mensaje
-            // de error del servidor incluido) antes de que se supiera el
-            // status: en el último intento fallido no debe quedar rastro
-            // donde el consumidor espera un fichero bueno. Los intentos
-            // anteriores ya quedaron sobrescritos por el siguiente (atómico),
-            // así que basta con limpiar una vez, al final.
-            try? FileManager.default.removeItem(at: destination)
+            // Ver el doc comment del método: con un `HTTPTransport` que
+            // cumple el contrato, `destination` nunca llegó a tocarse si
+            // estamos aquí, así que esto es un no-op salvo por transportes
+            // que no lo cumplan — y ni siquiera entonces se borra un fichero
+            // que ya estuviera ahí antes de esta llamada.
+            if !existedBefore {
+                try? FileManager.default.removeItem(at: destination)
+            }
             throw error
         }
     }

@@ -6,6 +6,8 @@ Todos los cambios notables de este paquete se documentan en este fichero. El for
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-04
+
 ### Corregido
 
 - `download(_:to:)`: un intento fallido ya no puede pisar ni borrar un fichero

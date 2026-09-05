@@ -117,6 +117,142 @@ struct InterceptorTests {
         )
     }
 
+    // MARK: - didFail exactamente una vez, en TODOS los caminos de fallo
+    //
+    // `RequestInterceptor.didFail` promete "called exactly once per failed
+    // attempt, regardless of which stage failed". `APIService` tiene SIETE
+    // sitios que llaman a `notifyInterceptorsOfFailure`: willSend que lanza
+    // (cubierto arriba), status non-2xx y error de transporte genérico
+    // (cubiertos arriba), y los cuatro de aquí abajo — cada uno con su propio
+    // `catch` en `performOnce`. El séptimo, la respuesta que no es
+    // `HTTPURLResponse` (`.invalidResponse`), NO tiene test: ni
+    // `InMemoryTransport` ni `URLSessionTransport` pueden producirla, porque
+    // `HTTPTransport.send`/`.download` ya declaran su tipo de retorno como
+    // `HTTPURLResponse` (no `URLResponse`) — un valor de ese tipo estático
+    // siempre pasa `as? HTTPURLResponse`, así que ese `guard` en
+    // `APIService.performOnce` es código muerto con la forma actual del
+    // protocolo. Cubrirlo exigiría debilitar `HTTPTransport` a `URLResponse` en
+    // producción, fuera del alcance de este cambio — ver el informe.
+
+    /// Extrae los `APIError` de los eventos `didFail`, en orden.
+    private func didFailErrors(_ events: [RecordingInterceptor.Event]) -> [APIError] {
+        events.compactMap { event in
+            if case .didFail(let error, _) = event { return error }
+            return nil
+        }
+    }
+
+    private func didReceiveCount(_ events: [RecordingInterceptor.Event]) -> Int {
+        events.filter {
+            if case .didReceive = $0 { return true }
+            return false
+        }
+        .count
+    }
+
+    @Test("didFail una vez en PinningFailure → .untrustedServer, sin didReceive")
+    func didFailOnPinningFailure() async throws {
+        let recorder = RecordingInterceptor()
+        let transport = InMemoryTransport()
+        await transport.register(
+            InMemoryTransport.Exchange(url: thingURL, response: .pinningFailure(host: "unit.test"))
+        )
+        let service = makeService(transport: transport, interceptors: [recorder])
+
+        do {
+            let _: Payload = try await service.execute(GetRequest())
+            Issue.record("debía lanzar")
+        } catch {
+            #expect(error.code == .untrustedServer, "esperaba .untrustedServer, llegó \(error.code)")
+        }
+
+        let events = await recorder.events
+        let failures = didFailErrors(events)
+        #expect(failures.count == 1, "didFail debe invocarse EXACTAMENTE una vez — eventos: \(events)")
+        #expect(failures.first?.code == .untrustedServer, "code incorrecto en didFail — eventos: \(events)")
+        #expect(didReceiveCount(events) == 0, "el transporte falló: didReceive NO debe invocarse — eventos: \(events)")
+    }
+
+    @Test("didFail una vez en URLError(.cancelled) del transporte → .cancelled, sin didReceive")
+    func didFailOnTransportCancellation() async throws {
+        let recorder = RecordingInterceptor()
+        let transport = InMemoryTransport()
+        await transport.register(
+            InMemoryTransport.Exchange(url: thingURL, response: .failure(URLError(.cancelled)))
+        )
+        let service = makeService(transport: transport, interceptors: [recorder])
+
+        do {
+            let _: Payload = try await service.execute(GetRequest())
+            Issue.record("debía lanzar")
+        } catch {
+            #expect(error.code == .cancelled, "esperaba .cancelled, llegó \(error.code)")
+        }
+
+        let events = await recorder.events
+        let failures = didFailErrors(events)
+        #expect(failures.count == 1, "didFail debe invocarse EXACTAMENTE una vez — eventos: \(events)")
+        #expect(failures.first?.code == .cancelled, "code incorrecto en didFail — eventos: \(events)")
+        #expect(didReceiveCount(events) == 0, "el transporte falló: didReceive NO debe invocarse — eventos: \(events)")
+    }
+
+    @Test("didFail una vez en CancellationError del transporte → .cancelled, sin didReceive")
+    func didFailOnSwiftCancellationError() async throws {
+        let recorder = RecordingInterceptor()
+        let transport = InMemoryTransport()
+        await transport.register(
+            InMemoryTransport.Exchange(url: thingURL, response: .failure(CancellationError()))
+        )
+        let service = makeService(transport: transport, interceptors: [recorder])
+
+        do {
+            let _: Payload = try await service.execute(GetRequest())
+            Issue.record("debía lanzar")
+        } catch {
+            #expect(error.code == .cancelled, "esperaba .cancelled, llegó \(error.code)")
+        }
+
+        let events = await recorder.events
+        let failures = didFailErrors(events)
+        #expect(failures.count == 1, "didFail debe invocarse EXACTAMENTE una vez — eventos: \(events)")
+        #expect(failures.first?.code == .cancelled, "code incorrecto en didFail — eventos: \(events)")
+        #expect(didReceiveCount(events) == 0, "el transporte falló: didReceive NO debe invocarse — eventos: \(events)")
+    }
+
+    /// Un error de transporte que no es `URLError`, `CancellationError` ni
+    /// `PinningFailure` — cae por el catch-all de `performOnce`, que lo
+    /// envuelve en `.unexpected` sin perder el original (`underlying`).
+    private struct UnanticipatedTransportError: Error, Equatable {}
+
+    @Test(
+        "didFail una vez en un error de transporte no anticipado → .unexpected, underlying preservado, sin didReceive"
+    )
+    func didFailOnUnanticipatedTransportError() async throws {
+        let recorder = RecordingInterceptor()
+        let transport = InMemoryTransport()
+        await transport.register(
+            InMemoryTransport.Exchange(url: thingURL, response: .failure(UnanticipatedTransportError()))
+        )
+        let service = makeService(transport: transport, interceptors: [recorder])
+
+        do {
+            let _: Payload = try await service.execute(GetRequest())
+            Issue.record("debía lanzar")
+        } catch {
+            #expect(error.code == .unexpected, "esperaba .unexpected, llegó \(error.code)")
+            #expect(
+                error.underlying is UnanticipatedTransportError,
+                "el error original nunca debe perderse en underlying"
+            )
+        }
+
+        let events = await recorder.events
+        let failures = didFailErrors(events)
+        #expect(failures.count == 1, "didFail debe invocarse EXACTAMENTE una vez — eventos: \(events)")
+        #expect(failures.first?.code == .unexpected, "code incorrecto en didFail — eventos: \(events)")
+        #expect(didReceiveCount(events) == 0, "el transporte falló: didReceive NO debe invocarse — eventos: \(events)")
+    }
+
     @Test("willSend que lanza: el transporte no recibe nada, code == .interceptor, didFail una sola vez")
     func willSendThrowsAbortsBeforeTransport() async throws {
         struct BoomError: Error {}

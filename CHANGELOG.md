@@ -23,18 +23,15 @@ Todos los cambios notables de este paquete se documentan en este fichero. El for
   misma afirmación por vía indirecta, y falsa en cuanto la máquina va cargada. Pasan a
   exigir la señal del mock; verificado que detectan la regresión (con `stopLoading`
   amputado, fallan por `tornDown`, no por un timeout genérico).
-- **El quinto —cancelar durante el backoff— mide contra la capacidad del runtime, no
-  contra un número.** Aquí no hay entrega que desmontar: lo que se cancela es la espera, y
-  el reloj es la única vía. Y el reloj estaba diciendo la verdad: en el simulador de iOS de
-  Xcode 26.3 (el de los runners de CI) `ContinuousClock.sleep` NO se interrumpe al cancelar
-  el Task — se consume el backoff entero y la cancelación solo aflora al despertar. Con 5 s
-  de backoff eso daban ~4 s de elapsed, que se leyeron como "runner lento"; subir el margen
-  a 30 s contra 10 s lo desenmascaró: 40,8 s. El test hace ahora una sonda de esa capacidad
-  y exige inmediatez donde el runtime la permite y "ni un backoff de más, ni un request de
-  más" donde no. `APIService` espera el backoff con `clock.sleep(for:)`, así que no puede
-  ser más rápido que el `sleep` del runtime; el contrato observable (`.cancelled`, sin
-  segundo request) se cumple en los dos casos. Documentado en <doc:Retry> y en
-  `sleepOrThrowCancelled`.
+- **El quinto —cancelar durante el backoff— cronometra la ventana del backoff, no la
+  operación entera.** Aquí no hay entrega que desmontar: lo que se cancela es la espera, y
+  el reloj es la única vía. Pero medir el total mezclaba esa espera con lo que tarda el
+  primer request, que en el simulador de un runner son segundos —sobre todo el primero de
+  la sesión—, y el fallo no decía cuál de las dos cosas había pasado. Un `RequestRetrier`
+  que devuelve siempre `.doNotRetry` (no cambia ninguna decisión: solo mira) sella el
+  instante en que el bucle va a dormir, y el presupuesto de 3 s se aplica desde ahí. El
+  `count == 1` no sustituye a esto: sin interrumpir la espera tampoco habría segundo
+  request, solo se tardaría el backoff entero.
 - **El presupuesto del test de 5 MB se escala al entorno.** `< 0,2 s` es el límite
   estrecho que aprieta de verdad en macOS, pero en el simulador de CI los MISMOS 5 MB por
   chunks midieron 3,3 s y hacían fallar el test con el código bueno. Bajo

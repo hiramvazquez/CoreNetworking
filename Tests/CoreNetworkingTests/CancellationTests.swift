@@ -32,11 +32,27 @@ struct CancellationTests {
 
     private func makeService(
         host: String,
-        policy: RetryPolicy = .noRetry
+        policy: RetryPolicy = .noRetry,
+        retriers: [any RequestRetrier] = []
     ) throws -> (APIService, URL) {
         let baseURL = try #require(URL(string: "https://\(host)"))
         let configuration = NetworkingConfiguration(baseURL: baseURL, protocolClasses: [MockURLProtocol.self])
-        return (APIService(configuration: configuration, retryPolicy: policy), baseURL)
+        return (
+            APIService(configuration: configuration, retryPolicy: policy, retriers: retriers),
+            baseURL
+        )
+    }
+
+    /// Sella el instante en que `APIService` decide reintentar — justo ANTES de dormir el
+    /// backoff. Devuelve siempre `.doNotRetry`, así que no cambia ninguna decisión: la
+    /// sigue tomando `RetryPolicy`. Es solo un mirador dentro del bucle.
+    private actor RetryInstantProbe: RequestRetrier {
+        private(set) var decidedAt: ContinuousClock.Instant?
+
+        func retry(_ error: APIError, context: RequestContext) async -> RetryDecision {
+            if decidedAt == nil { decidedAt = .now }
+            return .doNotRetry
+        }
     }
 
     private func registerSlowMock(url: URL, method: HTTPMethod = .get) {
@@ -140,43 +156,27 @@ struct CancellationTests {
         #expect(!FileManager.default.fileExists(atPath: destination.path))
     }
 
-    /// ¿Interrumpe ESTE runtime un `ContinuousClock.sleep` al cancelar el Task que lo
-    /// espera? Debería ser siempre que sí, y en macOS (y en el simulador de Xcode 26.6)
-    /// lo es. En el simulador de iOS que trae Xcode 26.3 —el de los runners `macos-15`—
-    /// NO: el sleep se consume entero y la cancelación solo se observa al despertar.
-    ///
-    /// La sonda cuesta 100 ms donde el runtime se porta bien y 2 s donde no, y evita
-    /// tener que elegir entre un test que miente sobre plataformas rotas o uno que no
-    /// afirma nada en las sanas.
-    private func runtimeInterruptsClockSleep() async -> Bool {
-        let start = ContinuousClock.now
-        let probe = Task { try await ContinuousClock().sleep(for: .seconds(2)) }
-        try? await Task.sleep(for: .milliseconds(100))
-        probe.cancel()
-        _ = await probe.result
-        return start.duration(to: .now) < .seconds(1)
-    }
-
     /// Único caso que sigue mirando el reloj, porque aquí no hay transferencia en vuelo
     /// que desmontar: el 500 se entrega al instante y lo que se cancela es la ESPERA del
     /// backoff, que no deja más rastro observable que no haberse consumido. El `count ==
     /// 1` no lo cubre: sin interrumpir la espera tampoco habría segundo request (el bucle
     /// de reintento ve el Task cancelado al despertar), solo se tardaría el backoff.
     ///
-    /// El presupuesto se mide contra lo que el runtime es capaz de hacer, no contra un
-    /// número fijo. `APIService` espera el backoff con `clock.sleep(for:)`, así que no
-    /// puede cancelar antes que el propio `sleep` del runtime: donde el runtime lo
-    /// interrumpe, se exige inmediatez; donde no, se exige lo que sigue estando en la
-    /// mano del paquete — que no se duerma DOS backoffs y que no salga un segundo
-    /// request. La versión anterior de este test daba por hecho lo primero y, cuando el
-    /// simulador de CI se comió el backoff entero, se leyó como "runner lento" y se le
-    /// subió el margen. No era el runner.
+    /// Y se mide la VENTANA DEL BACKOFF, no la operación entera. Medir el total mezcla
+    /// dos cosas que no tienen nada que ver: lo que tarda el primer request —en el
+    /// simulador de un runner, segundos, sobre todo el primero de la sesión— y lo que
+    /// tarda la cancelación en sacar al bucle de la espera, que es lo único que este
+    /// test afirma. Con el total, la primera se comía a la segunda y el fallo no decía
+    /// cuál de las dos había pasado: dos runs de CI y dos diagnósticos distintos, ambos
+    /// equivocados. Un `RequestRetrier` que no decide nada sella el instante en que el
+    /// bucle va a dormir, y desde ahí se cronometra.
     @Test("cancelar durante el backoff del retry → .cancelled sin segundo request")
     func cancelDuringBackoff() async throws {
         let host = "cancel-backoff.test"
         let backoff = Duration.seconds(5)
         let policy = RetryPolicy(maxAttempts: 2, initialDelay: backoff, maxDelay: backoff)
-        let (service, baseURL) = try makeService(host: host, policy: policy)
+        let probe = RetryInstantProbe()
+        let (service, baseURL) = try makeService(host: host, policy: policy, retriers: [probe])
         MockURLProtocol.register(
             MockNetworkExchange(
                 url: baseURL.appendingPathComponent("/slow"),
@@ -184,20 +184,20 @@ struct CancellationTests {
             )
         )
 
-        let elapsed = await expectCancelled {
+        let total = await expectCancelled {
             let _: Payload = try await service.execute(SlowRequest())
         }
-        if await runtimeInterruptsClockSleep() {
-            #expect(
-                elapsed < .seconds(3),
-                "el runtime sí interrumpe sus sleeps, así que la cancelación debía salir del backoff de \(backoff) al instante (\(elapsed))"
-            )
-        } else {
-            #expect(
-                elapsed < backoff * 2,
-                "este runtime no interrumpe `ContinuousClock.sleep`, pero aun así no debe dormirse más de un backoff (\(elapsed))"
-            )
-        }
+        let finishedAt = ContinuousClock.now
+
+        let decidedAt = try #require(
+            await probe.decidedAt,
+            "el bucle no llegó a decidir el reintento: sin backoff que cancelar, este test no mide nada"
+        )
+        let backoffWindow = decidedAt.duration(to: finishedAt)
+        #expect(
+            backoffWindow < .seconds(3),
+            "la cancelación no interrumpió el backoff de \(backoff): \(backoffWindow) en la espera (\(total) en total, primer request incluido)"
+        )
         let count = MockURLProtocol.recordedRequests.filter { $0.url?.host == host }.count
         #expect(count == 1, "no debe haber segundo request tras cancelar en el backoff")
     }

@@ -60,6 +60,57 @@ public enum HTTPMethod: String, Sendable {
 ///     init(title: String) { self.body = Body(title: title) }
 /// }
 /// ```
+/// How authentication interceptors should treat one request.
+///
+/// Surfaced on `RequestContext.authenticationPolicy` — not just read by
+/// `BearerTokenInterceptor`, but available to ANY interceptor in the chain,
+/// so a custom API-key or multi-tenant credential interceptor can honor the
+/// same declaration instead of inventing its own.
+public enum RequestAuthenticationPolicy: Sendable, Equatable {
+    /// Default: an authentication interceptor MAY attach its credential to
+    /// this request, but must never overwrite an `Authorization` header
+    /// (or similar) this specific request declared EXPLICITLY via
+    /// `BaseRequest.headers` — see `BearerTokenInterceptor.willSend` and
+    /// `RequestContext.explicitHeaderFields`. It DOES overwrite one that
+    /// only got there because `NetworkingConfiguration.defaultHeaders` set
+    /// it: that value is AMBIENT (a static placeholder captured once, when
+    /// the configuration was built), not a per-endpoint decision, and an
+    /// authentication interceptor's whole job is to supply the credential
+    /// that changes — a team pairing a `defaultHeaders` placeholder with a
+    /// real `BearerTokenInterceptor` gets the live token, not the
+    /// placeholder. Exactly the behavior every `BaseRequest` had before this
+    /// property existed, minus the bug where an explicit `Authorization`
+    /// got clobbered anyway.
+    case automatic
+
+    /// No AMBIENT credential reaches this request, regardless of whether
+    /// one is available. "Ambient" means anything applied to every request
+    /// without this one asking for it: `NetworkingConfiguration
+    /// .defaultHeaders` (a fixed API key or bearer token set once, globally)
+    /// and whatever an authentication interceptor would otherwise attach —
+    /// both are stripped/skipped for a small, fixed set of credential
+    /// header names (`Authorization`, `Proxy-Authorization`, `Cookie`,
+    /// `X-Api-Key` — see `APIService.ambientCredentialHeaderNames`).
+    ///
+    /// An `Authorization` (or other credential header) THIS request set
+    /// itself, via its own `headers`, is NOT ambient — it's what whoever
+    /// wrote this specific endpoint declared on purpose (e.g. a partner's
+    /// API key for a third-party host) — and survives untouched.
+    ///
+    /// For:
+    /// - A login/signup endpoint — the stale token from a previous session
+    ///   has no business being sent to it.
+    /// - The token-refresh endpoint itself — sending the very token being
+    ///   replaced (already expired, or the reason for the 401) is pointless
+    ///   and can itself trigger the failure it's meant to fix.
+    /// - A request to a third-party or partner host — leaking the app's own
+    ///   `Authorization` there is a credential leak, not a convenience. This
+    ///   is exactly the case a fixed API key in `defaultHeaders` would
+    ///   otherwise leak through, since `defaultHeaders` applies to every
+    ///   request regardless of host.
+    case none
+}
+
 public protocol BaseRequest: Sendable {
     /// Request body, encoded with `NetworkingConfiguration.makeEncoder`.
     /// Defaults to `Never`: a request that sends no body simply doesn't
@@ -98,6 +149,12 @@ public protocol BaseRequest: Sendable {
     /// effect (double charge, double insert). Set `true` ONLY when the
     /// endpoint is safe to repeat (e.g. idempotency keys server-side).
     var allowsNonIdempotentRetry: Bool { get }
+
+    /// How authentication interceptors should treat this request — see
+    /// `RequestAuthenticationPolicy`. Default: `.automatic`, identical to
+    /// this package's behavior before this property existed. See
+    /// <doc:Authentication> for the full header-precedence rules.
+    var authenticationPolicy: RequestAuthenticationPolicy { get }
 }
 
 // MARK: - Default Implementations
@@ -108,6 +165,7 @@ public extension BaseRequest {
     var queryItems: [URLQueryItem] { [] }
     var timeout: Duration { .seconds(30) }
     var allowsNonIdempotentRetry: Bool { false }
+    var authenticationPolicy: RequestAuthenticationPolicy { .automatic }
 }
 
 // MARK: - Empty

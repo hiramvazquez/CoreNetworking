@@ -27,16 +27,51 @@ public struct RequestContext: Sendable {
     /// measure duration against it.
     public let startedAt: ContinuousClock.Instant
 
+    /// This attempt's `BaseRequest.authenticationPolicy`. Surfaced here —
+    /// not only on `BaseRequest` — so ANY interceptor in the chain can
+    /// honor it, e.g. a custom API-key or multi-tenant credential
+    /// interceptor, not just the built-in `BearerTokenInterceptor`.
+    ///
+    /// Defaults to `.automatic`: existing code that constructs a
+    /// `RequestContext` directly (a custom test double, for instance) keeps
+    /// building one that behaves exactly as before this property existed.
+    public let authenticationPolicy: RequestAuthenticationPolicy
+
+    /// Field names `BaseRequest.headers` declared explicitly for this
+    /// attempt, lowercased (a plain `Set.contains("authorization")` is
+    /// enough — no need for `caseInsensitiveCompare` at the call site).
+    ///
+    /// This is the "explicit" half of the ambient/explicit distinction
+    /// `RequestAuthenticationPolicy` documents: `NetworkingConfiguration
+    /// .defaultHeaders` and whatever an interceptor attaches on its own are
+    /// AMBIENT — they apply to every request regardless of what THIS one
+    /// asked for. A header `BaseRequest.headers` set is not: whoever wrote
+    /// this specific endpoint put it there on purpose. `BearerTokenInterceptor`
+    /// reads this set to decide whether an `Authorization` already on the
+    /// request came from the endpoint itself (never overwritten) or is just
+    /// the ambient default (fair game for the live token) — any custom
+    /// interceptor can make the same distinction instead of inventing its
+    /// own signal.
+    ///
+    /// Defaults to `[]`: existing code that constructs a `RequestContext`
+    /// directly keeps building one that behaves exactly as before this
+    /// property existed (nothing looks "explicit").
+    public let explicitHeaderFields: Set<String>
+
     public init(
         id: UUID = UUID(),
         request: URLRequest,
         attempt: Int,
-        startedAt: ContinuousClock.Instant = ContinuousClock.now
+        startedAt: ContinuousClock.Instant = ContinuousClock.now,
+        authenticationPolicy: RequestAuthenticationPolicy = .automatic,
+        explicitHeaderFields: Set<String> = []
     ) {
         self.id = id
         self.request = request
         self.attempt = attempt
         self.startedAt = startedAt
+        self.authenticationPolicy = authenticationPolicy
+        self.explicitHeaderFields = explicitHeaderFields
     }
 }
 

@@ -39,10 +39,13 @@ func createAndDelete(service: any APIServiceProtocol) async throws(APIError) {
 ```
 
 Opciones por request, todas con default: `headers` (pisan a los de la configuración y al
-`Accept`/`Content-Type` del paquete), `queryItems` (`[]`), `timeout` (`Duration`, 30 s) y
-`allowsNonIdempotentRetry` (`false` — opt-in para reintentar POST/PATCH). `Content-Type:
-application/json` solo se envía cuando el request declara `body`; `Accept:
-application/json` siempre, salvo que `headers` lo sobrescriba.
+`Accept`/`Content-Type` del paquete), `queryItems` (`[]`), `timeout` (`Duration`, 30 s),
+`allowsNonIdempotentRetry` (`false` — opt-in para reintentar POST/PATCH) y
+`authenticationPolicy` (``RequestAuthenticationPolicy/automatic`` — un endpoint público, el
+propio refresh, o un host de terceros declaran `.none`; ver <doc:Authentication> para la
+tabla completa de precedencia de headers). `Content-Type: application/json` solo se envía
+cuando el request declara `body`; `Accept: application/json` siempre, salvo que `headers`
+lo sobrescriba.
 
 ### `APIService` / `APIServiceProtocol`
 

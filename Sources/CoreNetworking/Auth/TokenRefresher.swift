@@ -66,6 +66,26 @@ public actor TokenRefresher: TokenRefreshing {
 /// FRESH on every `willSend` call — including the one `TokenRefreshRetrier`
 /// triggers after a refresh, which is what lets the retried request carry
 /// the new token instead of the one that just got a 401.
+///
+/// Two exceptions, checked in order, before ever calling `tokenProvider`:
+/// 1. `context.authenticationPolicy == .none` — this request opted out of
+///    ANY credential (login endpoint, the refresh endpoint itself, a
+///    third-party host). Nothing is attached, even if a token is available.
+/// 2. `"authorization"` is in `context.explicitHeaderFields` — `BaseRequest
+///    .headers` set it itself (its own scheme, tenant, or API key). Left
+///    exactly as-is: this interceptor never overwrites a credential a
+///    SPECIFIC endpoint put there on purpose.
+///
+/// Deliberately NOT an exception: an `Authorization` already on the request
+/// because `NetworkingConfiguration.defaultHeaders` put it there. That is
+/// AMBIENT, not explicit — a static value captured once when the
+/// configuration was built, and this interceptor's whole job is to supply
+/// the LIVE credential `defaultHeaders` structurally can't hold. A team that
+/// configures both a placeholder in `defaultHeaders` and a real
+/// `BearerTokenInterceptor` gets the live token, exactly as before this
+/// package could tell "explicit" from "ambient" apart — see
+/// `RequestAuthenticationPolicy` and <doc:Authentication> for the full
+/// ambient/explicit distinction and header-precedence rules.
 public struct BearerTokenInterceptor: RequestInterceptor {
     private let tokenProvider: @Sendable () async -> String?
 
@@ -76,6 +96,8 @@ public struct BearerTokenInterceptor: RequestInterceptor {
     }
 
     public func willSend(_ request: URLRequest, context: RequestContext) async throws(APIError) -> URLRequest {
+        guard context.authenticationPolicy != .none else { return request }
+        guard !context.explicitHeaderFields.contains("authorization") else { return request }
         guard let token = await tokenProvider() else { return request }
         var request = request
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

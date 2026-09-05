@@ -97,8 +97,9 @@ public struct NetworkingConfiguration: Sendable {
     /// alternativa correcta a reintentar `notConnectedToInternet`, ver
     /// `APIError.isRetryable`), desactiva cookies (`httpShouldSetCookies`,
     /// `httpCookieAcceptPolicy`: una API JSON no las necesita y aceptarlas es
-    /// superficie de ataque sin beneficio) y fija `tlsMinimumSupportedProtocolVersion`
-    /// a TLS 1.2 (el mínimo aceptable hoy; nunca menos por defecto).
+    /// superficie de ataque sin beneficio) y aplica ``enforceSecurityFloor(on:defaultResourceTimeout:)``
+    /// (TLS 1.2 mínimo y un `timeoutIntervalForResource` sensato — ver ahí el
+    /// porqué de cada uno).
     public let sessionConfiguration: @Sendable () -> URLSessionConfiguration
 
     /// La `URLSessionConfiguration` por defecto de este paquete.
@@ -107,8 +108,116 @@ public struct NetworkingConfiguration: Sendable {
         configuration.waitsForConnectivity = true
         configuration.httpShouldSetCookies = false
         configuration.httpCookieAcceptPolicy = .never
-        configuration.tlsMinimumSupportedProtocolVersion = .TLSv12
-        return configuration
+        // El suelo de seguridad (TLS mínimo + timeout de recurso) se aplica
+        // aquí también, y no solo cuando alguien pasa una fábrica propia:
+        // una sola fuente de verdad para "qué es lo mínimo aceptable", en
+        // vez de duplicar `tlsMinimumSupportedProtocolVersion = .TLSv12` a
+        // mano en dos sitios que podrían divergir con el tiempo.
+        return enforceSecurityFloor(on: configuration)
+    }
+
+    // MARK: - Suelo de seguridad (independiente de qué fábrica use el consumidor)
+
+    /// El valor de `timeoutIntervalForResource` que trae Foundation cuando
+    /// NADIE lo toca: 7 días (604 800 s). Es el sentinel que usa
+    /// ``enforceSecurityFloor(on:defaultResourceTimeout:)`` para distinguir
+    /// "no lo tocaron" de "lo pusieron a propósito, aunque sea un valor raro".
+    static let unsetFoundationResourceTimeout: TimeInterval = 604_800
+
+    /// Valor de `timeoutIntervalForResource` que aplica el suelo cuando
+    /// detecta que nadie lo tocó (ver ``unsetFoundationResourceTimeout``).
+    ///
+    /// 60 s: el doble del timeout de INACTIVIDAD por request
+    /// (`BaseRequest.timeout`, 30 s por defecto — mide huecos entre paquetes,
+    /// no la duración total), margen suficiente para una respuesta lenta pero
+    /// que sigue progresando, y cuatro órdenes de magnitud por debajo del
+    /// default silencioso de Foundation. No es el valor correcto para TODO:
+    /// una subida/descarga de un fichero grande es legítimamente más larga, y
+    /// quien la haga debe fijar su propio `timeoutIntervalForResource` más alto
+    /// (ver <doc:Transport>, que ya documenta `c.timeoutIntervalForResource = 120`
+    /// como ejemplo). `URLSessionConfiguration.timeoutIntervalForResource` es
+    /// un ajuste de SESIÓN, no de request individual — hoy no hay forma de que
+    /// `execute` y `download`/`upload` usen valores distintos dentro de la
+    /// misma `URLSession` (ver `URLSessionTransport`, fuera del alcance de
+    /// este fichero).
+    public static let defaultResourceTimeoutFloor: TimeInterval = 60
+
+    /// Sube (nunca baja) una `URLSessionConfiguration` cualquiera al mínimo de
+    /// seguridad de este paquete.
+    ///
+    /// Existe porque `init(sessionConfiguration:)` acepta CUALQUIER fábrica:
+    /// alguien que solo quiera cambiar `timeoutIntervalForResource` puede
+    /// escribir `{ URLSessionConfiguration.default }` y perder en silencio el
+    /// TLS 1.2 mínimo (y quedarse con los 7 días de Foundation en
+    /// `timeoutIntervalForResource`) sin ningún aviso. Esta función es el
+    /// suelo que no depende de que quien la llama se acuerde de partir de
+    /// ``defaultSessionConfiguration()``.
+    ///
+    /// Dos reglas, una por propiedad, cada una justificada por separado:
+    ///
+    /// - `tlsMinimumSupportedProtocolVersion`: SOLO SUBE, nunca baja. Si el
+    ///   consumidor pidió TLS 1.3 (o algo que este paquete no sepa comparar,
+    ///   como una versión DTLS), se respeta — es tan seguro o más. Si pidió
+    ///   TLS 1.0/1.1, o no dijo nada (el default de Foundation es TLS 1.0), se
+    ///   sube a TLS 1.2. Comparar por `rawValue` es seguro aquí: los cuatro
+    ///   valores TLS de `tls_protocol_version_t` son consecutivos y crecientes
+    ///   con la versión (0x0301…0x0304), y los dos valores DTLS son mucho
+    ///   MAYORES que cualquier TLS (0xfeff, 0xfefd) — así que nunca se tocan
+    ///   por esta comparación, ni deben: DTLS no es "más o menos seguro" que
+    ///   TLS, es un protocolo distinto (datagramas), y este paquete no tiene
+    ///   base para imponer nada ahí.
+    /// - `timeoutIntervalForResource`: solo se toca si sigue en el sentinel de
+    ///   "nadie lo tocó" (``unsetFoundationResourceTimeout``, los 7 días de
+    ///   Foundation). Cualquier otro valor — el que ponga
+    ///   ``defaultResourceTimeoutFloor``, el `120` del ejemplo de
+    ///   <doc:Transport>, o cualquier cosa que el consumidor haya elegido a
+    ///   propósito — se respeta tal cual. A diferencia de TLS, aquí no hay un
+    ///   orden "más seguro" universal (un valor grande es legítimo para una
+    ///   descarga grande), así que la única señal fiable de "esto es un
+    ///   descuido, no una decisión" es que siga siendo EXACTAMENTE el default
+    ///   de Foundation.
+    ///
+    /// Deliberadamente NO toca `httpShouldSetCookies`/`httpCookieAcceptPolicy`
+    /// ni `waitsForConnectivity`: son preferencias legítimas del consumidor,
+    /// no un suelo de seguridad.
+    /// - Cookies: desactivarlas es la postura correcta para una API JSON
+    ///   (``defaultSessionConfiguration()`` lo hace), pero hay backends reales
+    ///   que autentican con cookies de sesión — forzar `.never` ahí rompería
+    ///   la app en vez de protegerla. Aceptar cookies no abre una brecha de
+    ///   TLS ni de integridad; es, como mucho, una superficie de ataque
+    ///   adicional que el consumidor puede evaluar y asumir con conocimiento
+    ///   de causa, cosa que TLS 1.0 o un timeout de 7 días no permiten evaluar
+    ///   porque son fallos silenciosos.
+    /// - `waitsForConnectivity`: es UX (esperar a que vuelva la red en vez de
+    ///   fallar al instante), no seguridad — no pertenece a este suelo.
+    ///
+    /// - Parameters:
+    ///   - sessionConfiguration: la configuración a elevar, MUTADA in place
+    ///     (y devuelta, para poder encadenar). `URLSessionConfiguration` es
+    ///     `Sendable` pero es una clase — el resto del tipo la trata como
+    ///     "una construcción, una fábrica" (ver el doc de `sessionConfiguration`
+    ///     arriba); esta función respeta esa misma disciplina.
+    ///   - defaultResourceTimeout: qué usar cuando `timeoutIntervalForResource`
+    ///     sigue en el sentinel de Foundation. Configurable para quien quiera
+    ///     un suelo distinto (p. ej. un servicio dedicado a
+    ///     descargas/subidas) sin renunciar al resto del suelo.
+    /// - Returns: la misma instancia que se pasó, para poder escribir
+    ///   `enforceSecurityFloor(on: miConfiguracion)` como expresión.
+    @discardableResult
+    public static func enforceSecurityFloor(
+        on sessionConfiguration: URLSessionConfiguration,
+        defaultResourceTimeout: TimeInterval = defaultResourceTimeoutFloor
+    ) -> URLSessionConfiguration {
+        let minimumTLSVersion = tls_protocol_version_t.TLSv12
+        if sessionConfiguration.tlsMinimumSupportedProtocolVersion.rawValue < minimumTLSVersion.rawValue {
+            sessionConfiguration.tlsMinimumSupportedProtocolVersion = minimumTLSVersion
+        }
+
+        if sessionConfiguration.timeoutIntervalForResource == unsetFoundationResourceTimeout {
+            sessionConfiguration.timeoutIntervalForResource = defaultResourceTimeout
+        }
+
+        return sessionConfiguration
     }
 
     // MARK: - Invariantes de `baseURL` (puro, testable sin trapear)

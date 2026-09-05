@@ -90,7 +90,15 @@ public final class APIService: APIServiceProtocol {
         // La fábrica es de `configuration` (`NetworkingConfiguration.sessionConfiguration`),
         // no `.default` a pelo: es lo que hace que `sessionConfiguration` llegue
         // a la `URLSession` real que construye `URLSessionTransport`.
-        let sessionConfiguration = configuration.sessionConfiguration()
+        // El suelo de seguridad se aplica SIEMPRE, venga la configuración de
+        // `defaultSessionConfiguration()` o de una fábrica propia del consumidor: sin esto,
+        // quien solo quería subir un timeout y escribió `{ URLSessionConfiguration.default }`
+        // perdía el mínimo TLS 1.2 en silencio, y `timeoutIntervalForResource` se quedaba en
+        // el default de Foundation — 7 días. `enforceSecurityFloor` es un SUELO, no un
+        // override: nunca baja un TLS mínimo más alto ni pisa un timeout ya fijado.
+        let sessionConfiguration = NetworkingConfiguration.enforceSecurityFloor(
+            on: configuration.sessionConfiguration()
+        )
         // `legacyProtocolClasses`, no el `protocolClasses` público deprecado:
         // este `init` sigue honrando lo que alguien pase ahí (compatibilidad
         // hacia atrás), pero leer el accessor público y deprecado desde aquí
@@ -387,7 +395,12 @@ public final class APIService: APIServiceProtocol {
         transport: (URLRequest) async throws -> (Data, URLResponse)
     ) async throws -> (data: Data, response: HTTPURLResponse, request: APIError.RequestSummary) {
         var urlRequest = try buildURLRequest(from: request)
-        let context = RequestContext(request: urlRequest, attempt: attempt)
+        let context = RequestContext(
+            request: urlRequest,
+            attempt: attempt,
+            authenticationPolicy: request.authenticationPolicy,
+            explicitHeaderFields: Set(request.headers.keys.map { $0.lowercased() })
+        )
 
         for interceptor in interceptors {
             do {
@@ -558,6 +571,18 @@ public final class APIService: APIServiceProtocol {
             urlRequest.setValue(value, forHTTPHeaderField: key)
         }
 
+        // `.none` cierra la vía AMBIENTAL (`defaultHeaders`, aplicado arriba
+        // sin que este request lo pidiera) — nunca la EXPLÍCITA
+        // (`request.headers`, que quien escribió ESTE endpoint puso a
+        // propósito, p. ej. la API key de un partner). Por eso se hace
+        // DESPUÉS del merge y solo toca una clave si `request.headers` no la
+        // trae: así una credencial que el propio request declaró sobrevive
+        // intacta, y solo desaparece lo que vino "gratis" de la
+        // configuración global. Ver `Self.ambientCredentialHeaderNames`.
+        if request.authenticationPolicy == .none {
+            Self.stripAmbientCredentialHeaders(from: &urlRequest, explicitHeaders: request.headers)
+        }
+
         if let body = request.body {
             do {
                 urlRequest.httpBody = try configuration.makeEncoder().encode(body)
@@ -572,6 +597,47 @@ public final class APIService: APIServiceProtocol {
         }
 
         return urlRequest
+    }
+
+    /// Header names that carry a credential an app typically sets ONCE, in
+    /// `NetworkingConfiguration.defaultHeaders`, expecting it on every
+    /// request — exactly the ambient path `RequestAuthenticationPolicy.none`
+    /// exists to opt a request OUT of (a public endpoint, the refresh
+    /// endpoint itself, a third-party host that must never see the app's
+    /// own credential).
+    ///
+    /// Deliberately a small, EXACT-match set — no substring heuristics like
+    /// `HeaderRedactor`'s (`Logging.swift`). That list is tuned for logs,
+    /// where over-redacting is free: hiding one extra field costs nothing.
+    /// Here, over-matching means silently dropping a header an app is
+    /// actually relying on the wire — a real behavioral break, not a
+    /// display nicety — so this only ever removes names that are
+    /// unambiguously, by convention, a bearer of ambient authentication.
+    /// `Set-Cookie` is deliberately excluded: it is a RESPONSE header, never
+    /// sent on a request.
+    private static let ambientCredentialHeaderNames: Set<String> = [
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        "x-api-key"
+    ]
+
+    /// Removes any `ambientCredentialHeaderNames` header from `urlRequest`
+    /// UNLESS `explicitHeaders` (i.e. `BaseRequest.headers`) sets that exact
+    /// field itself — that one was written on purpose for THIS endpoint
+    /// (e.g. a partner's own API key), not inherited from
+    /// `NetworkingConfiguration.defaultHeaders`, so `.none` leaves it alone.
+    private static func stripAmbientCredentialHeaders(
+        from urlRequest: inout URLRequest,
+        explicitHeaders: [String: String]
+    ) {
+        for name in ambientCredentialHeaderNames {
+            let setExplicitlyByThisRequest = explicitHeaders.keys.contains {
+                $0.caseInsensitiveCompare(name) == .orderedSame
+            }
+            guard !setExplicitlyByThisRequest else { continue }
+            urlRequest.setValue(nil, forHTTPHeaderField: name)
+        }
     }
 
     /// Notifies all interceptors of a request failure.

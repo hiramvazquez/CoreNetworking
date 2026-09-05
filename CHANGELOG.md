@@ -6,6 +6,130 @@ Todos los cambios notables de este paquete se documentan en este fichero. El for
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-04
+
+### Seguridad
+
+- **Trinquete de mutación 55 → 70**, con el score medido en **76,4 %** (120 mutantes muertos
+  de 157) sobre el árbol que ya incluye la política de autenticación, la de redirecciones y
+  el suelo de seguridad. Los supervivientes bajan de 39 a 19.
+
+### Añadido
+
+- `RequestAuthenticationPolicy` (`.automatic`/`.none`) en `BaseRequest`, surfaceado en
+  `RequestContext.authenticationPolicy` para que CUALQUIER interceptor (no solo
+  `BearerTokenInterceptor`) pueda consultarlo. Resuelve dos huecos reales de una app
+  empresarial: hasta ahora no había forma de dejar un endpoint fuera de la autenticación
+  automática (login, el propio refresh, un host de terceros recibían igualmente el
+  `Authorization` interno) ni de que un `BaseRequest` fijara su propia credencial
+  (`BearerTokenInterceptor` la pisaba sin condición). `.none` corta las DOS vías
+  ambientales por las que una credencial le llega a un request sin que lo haya pedido:
+  `BearerTokenInterceptor` no adjunta nada, y `buildURLRequest` retira, de
+  `NetworkingConfiguration.defaultHeaders` (una API key o bearer fijo puesto una vez,
+  globalmente — patrón normal, y exactamente lo que se filtraba en la primera versión de
+  este cambio), los headers `Authorization`, `Proxy-Authorization`, `Cookie` y `X-Api-Key`
+  (`APIService.ambientCredentialHeaderNames`, un conjunto exacto y deliberadamente
+  estrecho — sin las coincidencias por subcadena de `HeaderRedactor`, pensadas para logs
+  donde sobre-redactar es gratis, no para retirar headers de un request real). La vía
+  EXPLÍCITA (`BaseRequest.headers`, la credencial que el propio endpoint declaró a
+  propósito — un partner, otro tenant) nunca se toca, ni bajo `.automatic` (no se pisa) ni
+  bajo `.none` (no se retira). La misma distinción decide, bajo `.automatic`, qué pisa
+  `BearerTokenInterceptor`: un `Authorization` que llegó SOLO por `defaultHeaders` es
+  ambiental (un diccionario estático que no puede llevar un token vivo) y el interceptor lo
+  sustituye sin condición — es justo su trabajo suplirlo —, nunca uno que
+  `BaseRequest.headers` declaró explícitamente. `RequestContext.explicitHeaderFields`
+  (nuevo, `Set<String>` en minúsculas) es el canal que expone esa distinción a cualquier
+  interceptor, no solo al de Bearer. Retrocompatible: el default `.automatic` reproduce el
+  comportamiento de siempre para cualquier `BaseRequest` existente. Ver <doc:Authentication>
+  para la tabla de precedencia de headers (antes no documentada en ningún sitio) y los
+  casos de uso.
+- `RedirectPolicy` (`Transport/RedirectPolicy.swift`) y su aplicación en
+  `TaskDelegate.urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:)`,
+  configurable en `URLSessionTransport.init(redirectPolicy:)`. El agujero: `URLSession`
+  sigue las redirecciones 3xx automáticamente y en silencio (no es un error, así que ningún
+  `catch` del pipeline lo veía) y este paquete no fijaba ni comprobaba qué pasaba con
+  `Authorization` cuando el destino cambiaba de origen. Medido empíricamente (nunca
+  supuesto — `RedirectSecurityTests`, sockets loopback reales, ya que un `URLProtocol` de
+  mock jamás invoca `willPerformHTTPRedirection`): Foundation retira
+  `Authorization`/`Proxy-Authorization` de TODA redirección, incluida una de mismo
+  origen — comportamiento no documentado y específico de CFNetwork, no garantizado en
+  `swift-corelibs-foundation` (Linux) ni en otra versión de Darwin — pero no toca ningún
+  otro header: `Cookie`, `X-Api-Key`, `X-Auth-Token` o una `Authentication` a medida cruzan
+  a CUALQUIER destino sin filtrar, origen distinto incluido. Esa es la fuga real. Default
+  seguro, `.followSanitizingCrossOrigin`: sigue la redirección; retira cualquier header con
+  pinta de credencial cuando el origen (scheme/host/puerto) cambia, y restaura los que
+  Foundation haya podido retirar por su cuenta cuando NO cambia (si no, una redirección
+  legítima dentro del propio dominio perdería la sesión en silencio — una regresión
+  funcional, no solo de seguridad). `.never` (no seguir ninguna redirección) y
+  `.followPreservingAllHeaders` (opt-out explícito, sin filtrar nada) cubren el resto de
+  casos de una app empresarial. El pinning se sigue aplicando tras una redirección a otro
+  host sin cambio adicional — es un challenge por TAREA y el mismo `TaskDelegate` de la
+  tarea sigue siendo su delegate; verificado en `RedirectSecurityTests`.
+  `RedirectPolicy.sensitiveHeaderNames` es, deliberadamente, una segunda copia del conjunto
+  exacto de `HeaderRedactor` (`Logging.swift`) — no la lista con coincidencias por
+  subcadena, pensada para logs donde sobre-redactar es gratis, no para retirar headers de
+  un request real (mismo criterio que `APIService.ambientCredentialHeaderNames`, añadido
+  arriba para un problema relacionado pero distinto: credenciales ambientales de
+  `defaultHeaders`, no redirecciones). Compartir una sola fuente para las tres listas queda
+  como follow-up; `Logging.swift` estaba fuera del alcance de este cambio. Ver
+  <doc:Transport> para la política completa y el comportamiento medido.
+- `NetworkingConfiguration.enforceSecurityFloor(on:defaultResourceTimeout:)`: el suelo de
+  seguridad ya no depende de partir de `defaultSessionConfiguration()`.
+  `init(sessionConfiguration:)` acepta CUALQUIER fábrica, y una que solo quisiera tocar,
+  por ejemplo, `timeoutIntervalForResource` podía escribir `{ URLSessionConfiguration.default }`
+  y perder en silencio el TLS 1.2 mínimo — sin aviso, sin test. La nueva función sube (nunca
+  baja) `tlsMinimumSupportedProtocolVersion` a TLS 1.2 y rellena `timeoutIntervalForResource`
+  a 60 s cuando detecta el sentinel de "nadie lo tocó" (el default de Foundation son 604 800 s
+  = 7 días, que además combina mal con `waitsForConnectivity = true`: un servidor que manda
+  un byte cada 20 s mantiene la conexión viva DÍAS sin disparar nunca el timeout de
+  inactividad de 30 s de `BaseRequest.timeout`). Cualquier valor explícito del consumidor
+  (TLS 1.3, o un `timeoutIntervalForResource` propio para una descarga grande) se respeta tal
+  cual — es un suelo, no un override. Deliberadamente NO toca cookies ni
+  `waitsForConnectivity`: son preferencia legítima del consumidor (hay backends que
+  autentican con cookies de sesión), no un mínimo de seguridad comparable a TLS.
+  `defaultSessionConfiguration()` ahora delega en esta función (una sola fuente de verdad) y
+  gana el mismo relleno de `timeoutIntervalForResource` — retrocompatible: nadie que la use
+  nota nada salvo la mejora. Ver <doc:Transport>, sección "Suelo de seguridad de la sesión".
+
+### Pruebas
+
+- Mutation testing (`swift-mutation-testing`): 10 tests nuevos matan 15 de los supervivientes
+  detectados sobre `main` (`APIErrorTests.swift`, `NetworkingConfigurationTests.swift`,
+  `RetryBehaviorTests.swift`, `LoggingRedactionTests.swift`) — ninguno crea fichero paralelo,
+  todos amplían una suite existente:
+  - `APIError.isRetryable`: los dos casos degenerados que nadie construye en producción pero
+    que el tipo no puede asumir que no ocurrirán — `.transport` sin `underlying` y
+    `.httpStatus` sin `response` — ahora se afirman como NO reintentables explícitamente
+    (antes, "sin datos" se comportaba como "reintentable" y nada lo notaba).
+  - `APIError.description`: contrato completo (code/method/status/underlying resumido)
+    afirmado carácter por carácter, incluyendo el caso mínimo (solo `code`, sin partes
+    vacías) y un test de no-fuga dedicado — la URL, el body y el mensaje de `underlying`
+    nunca deben sobrevivir en esta cadena log-safe.
+  - `APIService.performWithRetry`: `maxAttempts` acota también la rama `catch let apiError
+    as APIError` (cuando `buildURLRequest` falla, p. ej. `.encoding`, ANTES de que exista un
+    `RequestContext`) — antes solo se probaba por el camino de `AttemptFailure`. El test usa
+    un `RetryPolicy(shouldRetry:)` a medida que sí acepta `.encoding` (el predicado por
+    defecto nunca lo haría) y cuenta los intentos reales de codificar el body. Conducir el
+    `ManualClock` con una tarea en segundo plano (sin asumir cuántos backoffs habrá) evita que
+    el test se cuelgue si una mutación del guard lanza antes de dormir nunca — verificado
+    inyectando manualmente las mutaciones `<` → `<=` y la negación completa del guard contra
+    una copia descartable del paquete: ambas fallan limpio (< 10 ms), ninguna cuelga.
+  - `NetworkingConfiguration.defaultSessionConfiguration()`: los defaults documentados
+    (`waitsForConnectivity`, cookies desactivadas, TLS 1.2 mínimo) se afirman por primera vez
+    — antes solo se comprobaba que el punto de extensión compilaba. Se añade también el exit
+    test que faltaba para la `precondition` real de `init` (mensaje incluido), con el mismo
+    mecanismo que ya usaba `SSLPinningConfiguration`.
+  - `LoggingInterceptor()`: los defaults `includeHeaders`/`includeBody` (`false`, opt-in) se
+    verifican por `Mirror` — no hay otra forma de observarlos desde fuera sin interceptar
+    `os.Logger` (descartado, ver el comentario de la suite) ni tocar producción para
+    exponerlos; mismo mecanismo que `APIError.caseName` en este mismo target.
+  - Supervivientes NO atacados, con justificación (ver informe de la tarea para el detalle):
+    seis `NetLog.network.debug/error(...)` de `LoggingInterceptor` (ningún test de este
+    target puede observar una llamada a `os.Logger`, documentado ya en la propia suite);
+    `SSLPinningConfiguration.gatedForDevelopment`'s `#else` (código muerto en cualquier build
+    DEBUG, que es como corre `swift test`); y el `>` → `>=` de `RetryPolicy.jitteredDelay`
+    (mutante equivalente: mismo resultado observable para cualquier `Duration` no negativa).
+
 ## [1.1.0] - 2026-09-04
 
 ### Cambiado

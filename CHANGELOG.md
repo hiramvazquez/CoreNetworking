@@ -6,6 +6,93 @@ Todos los cambios notables de este paquete se documentan en este fichero. El for
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-09-05
+
+### Documentación
+
+- **`BaseRequest.timeout` documenta que es un timeout de INACTIVIDAD**, no un techo a la
+  duración total, y que con `waitsForConnectivity` —el default del paquete— queda suprimido
+  del todo contra un servidor conectado que no manda bytes. Medido contra un host real, no
+  inferido (`LiveNetworkTests`). El techo efectivo en ese caso es
+  `timeoutIntervalForResource`, que `enforceSecurityFloor(on:)` fija en 60 s frente a los 7
+  días de Foundation.
+
+### Cambiado
+
+- **CI**: nuevo job `red-real` (`.github/workflows/ci.yml`), con su propio `schedule`
+  diario y `workflow_dispatch` — nunca en push/PR, mismo patrón que `mutation` (que ahora
+  distingue su propio cron semanal del nuevo cron diario vía `github.event.schedule`, para
+  no dispararse el uno al otro ni duplicar la corrida cara de `mutation`). Ejecuta
+  `LiveNetworkTests` (ver más abajo) contra `dummyjson.com`/`httpbin.org`.
+
+### Pruebas
+
+- `Tests/CoreNetworkingTests/LiveNetworkTests.swift`: suite de red REAL, opt-in
+  (`CORENETWORKING_LIVE_NETWORK_TESTS=1 swift test --filter LiveNetworkTests`), apagada por
+  defecto con `@Suite(.enabled(if:))` — `swift test` a secas sigue en 226 tests verdes y
+  ~0,1 s, sin tocar la red. Cierra el hueco que ningún mock puede cerrar: `MockURLProtocol`
+  sustituye el transporte DESPUÉS de la fase TLS, así que el pinning nunca había visto un
+  `didReceive challenge:` real (`PinningPipelineTests` lo documenta explícitamente como
+  fuera de su alcance). Diez tests, dos backends:
+  - `dummyjson.com` (el backend de referencia de AppStarter): un payload real decodifica
+    con el `JSONDecoder` del paquete; un 404 real produce `.notFound` con el cuerpo
+    accesible por `decodeBody`; y el pinning, contra un handshake TLS en vivo, ACEPTA el
+    pin SPKI que el propio handshake acaba de servir (calculado en el momento, no fijado a
+    mano — no queda obsoleto cuando el backend rote su clave) y RECHAZA uno que nunca puede
+    coincidir, con `.untrustedServer`.
+  - `httpbin.org` (comportamientos de transporte que `dummyjson.com` no ofrece):
+    redirecciones encadenadas, `Content-Encoding: gzip` transparente, un cuerpo servido en
+    más de un frame de red, un `Retry-After` real en minúsculas (HTTP/2, no el
+    `"Retry-After"` que solo un mock escribiría así), un 429 real, y un timeout real de
+    `BaseRequest.timeout` contra una respuesta deliberadamente lenta.
+  - Hallazgo de escribir el último: `waitsForConnectivity = true` (el default del paquete)
+    SUPRIME el timeout de inactividad por request contra un servidor que sigue conectado
+    pero no manda ni un byte durante la espera — verificado empíricamente, invisible para
+    cualquier mock. El test lo documenta y fija `waitsForConnectivity = false` para poder
+    seguir probando `BaseRequest.timeout` en menos de un segundo.
+  - Se descartó un servidor HTTPS local con certificado autofirmado para el pinning (la
+    opción más determinista): la única vía pública para un `SecIdentity` de servidor pasa
+    por el llavero, y un runner de CI headless puede colgarse indefinidamente en el diálogo
+    de control de acceso la primera vez que se usa una clave privada importada. Ver el doc
+    comment del propio fichero de test para el razonamiento completo.
+  - Cada test anota (`Issue.record`, sin cambiar si pasa o falla) si un fallo pinta a
+    backend caído o a una regresión real de CoreNetworking, para que el job de CI (`red-real`,
+    ver más abajo) no confunda "dummyjson.com está caído" con "nuestro pinning dejó de
+    funcionar".
+- Tests de interacción (espía) para tres contratos de `RequestInterceptor`/`RequestRetrier`
+  que ningún test verificaba — un refactor podía invertir o borrar la línea que los cumple y
+  la suite seguía en verde:
+  - `RequestInterceptor.didFail`: "called exactly once per failed attempt, regardless of
+    which stage failed" tenía test para 3 de los 7 sitios de `APIService` que notifican un
+    fallo (status non-2xx, error de transporte, `willSend` que lanza). `InterceptorTests.swift`
+    añade los 4 que faltaban — `PinningFailure` → `.untrustedServer`, `URLError(.cancelled)` →
+    `.cancelled`, `CancellationError` → `.cancelled`, y el catch-all → `.unexpected` con
+    `underlying` preservado — cada uno afirmando `didFail` EXACTAMENTE una vez y `didReceive`
+    CERO veces (el transporte nunca entregó respuesta). El séptimo camino, una respuesta que no
+    es `HTTPURLResponse`, queda sin test: `HTTPTransport.send`/`.download` declaran su retorno
+    como `HTTPURLResponse` (no `URLResponse`), así que ningún transporte conforme —
+    `InMemoryTransport` incluido— puede producir ahí un valor que falle `as? HTTPURLResponse`;
+    el `guard` de `APIService.performOnce` que lo comprueba es código muerto con la forma
+    actual del protocolo.
+  - Precedencia `retriers` → `retryPolicy` (`RequestRetrier`'s doc): `RetrierTests.swift` prueba
+    que `retryPolicy.shouldRetry` NO se consulta cuando un retrier ya decidió, que SÍ se
+    consulta (tras todos los retriers, en su orden) cuando todos responden `.doNotRetry`, y que
+    `RetryDecision.retry` (a través de un retrier, no del camino sin retriers) prefiere el
+    `Retry-After` del servidor sobre el backoff de `RetryPolicy`, y usa ese backoff cuando el
+    servidor no manda el header — las tres combinaciones documentadas en `RetryDecision` que
+    antes solo cubría, parcialmente, el camino sin retriers.
+  - `TokenRefreshRetrier` solo dispara el refresh en el primer intento (su doc: un 401 en un
+    intento posterior significa que el token recién refrescado tampoco vale, y refrescar de
+    nuevo en bucle no terminaría nunca): nuevo test con un servidor que sigue devolviendo 401
+    tras el refresh confirma que `refreshToken()` se llama EXACTAMENTE una vez y que el 401
+    final llega intacto al llamador.
+  - Los nueve tests se rompieron a propósito, uno por uno, sobre una copia descartable del
+    árbol (nunca en el repo): comentar cada llamada a `notifyInterceptorsOfFailure`, invertir
+    el orden de `retriers`, invertir las dos ramas del `if let decision = ...`/`else` en
+    `performWithRetry`, hacer que `.retry` ignore el `Retry-After` del servidor o el backoff, y
+    quitar el `context.attempt == 1` de `TokenRefreshRetrier.retry` — cada mutación hizo fallar
+    exactamente el test escrito para detectarla, y solo ese.
+
 ## [1.2.0] - 2026-09-04
 
 ### Seguridad

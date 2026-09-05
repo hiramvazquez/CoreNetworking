@@ -109,6 +109,9 @@ public final class MockURLProtocol: URLProtocol, @unchecked Sendable {
         var exchanges: [MatchKey: MockNetworkExchange] = [:]
         var cursors: [MatchKey: Int] = [:]
         var recorded: [URLRequest] = []
+        /// Entregas con latencia que `stopLoading` canceló ANTES de entregarse, por
+        /// método+URL. Ver `cancelledDeliveries(method:url:)`.
+        var cancelledDeliveries: [MatchKey: Int] = [:]
     }
 
     private static let registry = OSAllocatedUnfairLock(initialState: RegistryState())
@@ -136,6 +139,48 @@ public final class MockURLProtocol: URLProtocol, @unchecked Sendable {
     /// Every request this protocol handled, in order.
     public static var recordedRequests: [URLRequest] {
         registry.withLock { $0.recorded }
+    }
+
+    /// Cuántas entregas con `latency` canceló `stopLoading` para ese método+URL ANTES
+    /// de que llegaran a entregarse.
+    ///
+    /// Es la señal OBSERVABLE de que el URL loading system desmontó de verdad la
+    /// transferencia en vuelo — lo que hace una cancelación real. Sustituye a medir el
+    /// reloj ("tardó menos que la latencia del mock, luego se canceló"), que es la misma
+    /// afirmación por vía indirecta y se rompe en cuanto la máquina va cargada: en el
+    /// simulador de un runner de CI, cancelaciones correctas tardaban ~4 s y hacían
+    /// fallar un presupuesto de 2 s.
+    ///
+    /// Una entrega que llegó a ejecutarse NO cuenta aquí aunque después llegue un
+    /// `stopLoading` (entrega y cancelación se reclaman en exclusión mutua), así que el
+    /// contador solo sube cuando hubo cancelación genuina.
+    ///
+    /// Aísla por URL, igual que los mocks: un contador global sería inservible con las
+    /// suites en paralelo.
+    public static func cancelledDeliveries(method: HTTPMethod = .get, url: URL) -> Int {
+        let key = MatchKey(method: method.rawValue, url: url)
+        return registry.withLock { $0.cancelledDeliveries[key, default: 0] }
+    }
+
+    /// Espera a que `cancelledDeliveries(method:url:)` llegue a `count`, con un timeout
+    /// explícito. Devuelve `false` si expira — nunca cuelga.
+    ///
+    /// El sondeo es un detalle de implementación: lo que se espera es la señal, no un
+    /// tiempo fijo. El caso bueno sale en el primer sondeo o el segundo; el malo tarda
+    /// exactamente `timeout` y falla por el motivo correcto, no por un `sleep` que se
+    /// quedó corto.
+    public static func waitForCancelledDelivery(
+        method: HTTPMethod = .get,
+        url: URL,
+        count: Int = 1,
+        timeout: Duration = .seconds(10)
+    ) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while true {
+            if cancelledDeliveries(method: method, url: url) >= count { return true }
+            if ContinuousClock.now >= deadline { return false }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
     }
 
     // MARK: URLProtocol
@@ -177,6 +222,17 @@ public final class MockURLProtocol: URLProtocol, @unchecked Sendable {
             // (Xcode 26.3 lo reporta como error). Un work item es `@Sendable` y se cancela
             // igual desde `stopLoading`.
             let work = DispatchWorkItem { [self] in
+                // Reclama la entrega: si `stopLoading` ya se llevó el work item, esta
+                // ejecución no entrega nada. Así entrega y cancelación se excluyen
+                // mutuamente incluso si `cancel()` llega con el item ya arrancado, y el
+                // contador de `cancelledDeliveries` no puede contar una entrega que sí
+                // ocurrió.
+                let claimed = pendingDelivery.withLockUnchecked { pending -> Bool in
+                    guard pending != nil else { return false }
+                    pending = nil
+                    return true
+                }
+                guard claimed else { return }
                 self.deliver(exchange, response: response)
             }
             pendingDelivery.withLockUnchecked { $0 = work }
@@ -189,10 +245,17 @@ public final class MockURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     public override func stopLoading() {
-        pendingDelivery.withLockUnchecked { pending in
-            pending?.cancel()
+        let cancelled = pendingDelivery.withLockUnchecked { pending -> Bool in
+            guard let work = pending else { return false }
+            work.cancel()
             pending = nil
+            return true
         }
+        // Solo cuenta si había una entrega pendiente que ESTE `stopLoading` se llevó por
+        // delante: un `stopLoading` tras una entrega ya consumada no es una cancelación.
+        guard cancelled, let url = request.url else { return }
+        let key = MatchKey(method: request.httpMethod ?? "GET", url: url)
+        Self.registry.withLock { $0.cancelledDeliveries[key, default: 0] += 1 }
     }
 
     // MARK: Delivery

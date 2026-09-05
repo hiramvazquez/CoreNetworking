@@ -6,6 +6,34 @@ Todos los cambios notables de este paquete se documentan en este fichero. El for
 
 ## [Unreleased]
 
+### Añadido
+
+- **`MockURLProtocol.cancelledDeliveries(method:url:)` y `waitForCancelledDelivery(...)`**
+  (en `CoreNetworkingTestSupport`): cuántas entregas diferidas por `latency` canceló
+  `stopLoading` antes de entregarse, y una espera con timeout explícito sobre ese contador.
+  Es la señal observable de que el URL loading system desmontó la transferencia en vuelo —
+  lo que hace una cancelación real. Entrega y cancelación se reclaman ahora en exclusión
+  mutua, así que el contador nunca cuenta una entrega que sí ocurrió. Aísla por URL, como
+  los mocks: un contador global sería inservible con las suites en paralelo.
+
+### Corregido
+
+- **Los cinco tests de cancelación dejan de medir el reloj.** Assertaban "tardó menos de
+  2 s, luego se canceló" contra una latencia de mock de 5 s: la misma afirmación por vía
+  indirecta, y falsa en cuanto la máquina va cargada. En el simulador de un runner de CI
+  fallaban los cinco a la vez con ~4 s de elapsed y la cancelación funcionando — la máquina,
+  no el paquete. Los cuatro que tienen transferencia en vuelo pasan a exigir la señal del
+  mock; verificado que detectan la regresión (con `stopLoading` amputado, fallan por
+  `tornDown`, no por un timeout genérico). El quinto — cancelar durante el backoff — no
+  tiene entrega que desmontar, así que sigue con reloj, pero con el margen arreglado: 30 s
+  de backoff contra un presupuesto de 10 s en vez de 5 contra 2.
+- **El presupuesto del test de 5 MB se escala al entorno.** `< 0,2 s` es el límite
+  estrecho que aprieta de verdad en macOS, pero en el simulador de CI los MISMOS 5 MB por
+  chunks midieron 3,3 s y hacían fallar el test con el código bueno. Bajo
+  `targetEnvironment(simulator)` el presupuesto pasa a 20 s, que sigue separando sin duda
+  "por chunks" de "byte a byte" (5,2 millones de suspensiones, minutos), sin tirar a la
+  basura el guard afilado de macOS.
+
 ## [1.2.2] - 2026-09-05
 
 ### Cambiado

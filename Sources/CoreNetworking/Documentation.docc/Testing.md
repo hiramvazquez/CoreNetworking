@@ -78,6 +78,26 @@ registro es estático y compartido, y Swift Testing paraleliza las suites por de
 `removeAll()` en tu test borra los mocks de las suites que corren a la vez. Usa un host
 distinto por test (`https://mi-caso.test`).
 
+Para tests de CANCELACIÓN, `latency` da una entrega diferida que `stopLoading` cancela, y
+`cancelledDeliveries(method:url:)` cuenta las que se cancelaron antes de entregarse: la
+señal observable de que la transferencia en vuelo se desmontó de verdad.
+
+```swift
+MockURLProtocol.register(
+    MockNetworkExchange(url: url, response: MockResponse(statusCode: 200), latency: .seconds(5))
+)
+let task = Task { let _: Payload = try await service.execute(SlowRequest()) }
+try await Task.sleep(for: .milliseconds(100))
+task.cancel()
+_ = await task.result
+
+assert(await MockURLProtocol.waitForCancelledDelivery(url: url))
+```
+
+Medir el reloj ("tardó menos que la latencia del mock, luego se canceló") afirma lo mismo
+por vía indirecta y se rompe en cuanto la máquina va cargada — en el simulador de un runner
+de CI, cancelaciones correctas tardaban ~4 s. El contador no depende de eso.
+
 ## `MockAPIService`
 
 Stub de `APIServiceProtocol` para tests de CONSUMIDORES del paquete (un `Service` propio,

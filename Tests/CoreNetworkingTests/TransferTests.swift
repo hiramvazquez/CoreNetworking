@@ -337,10 +337,16 @@ struct TransferTests {
     }
 
     /// CN-07: `download` iteraba `AsyncBytes` byte a byte (una llamada async
-    /// POR BYTE) — órdenes de magnitud más lento que recibir chunks. Este
-    /// test no mide un límite estricto (sería flaky en CI), pero 5 MB
-    /// byte-a-byte tarda segundos incluso en el simulador más rápido; 0,2 s
-    /// es generoso para "recibe por chunks" y estrecho para "recibe por byte".
+    /// POR BYTE) — órdenes de magnitud más lento que recibir chunks.
+    ///
+    /// El presupuesto depende de dónde corra, porque el suelo de la máquina también:
+    /// en macOS (`swift test`) 5 MB por chunks quedan muy por debajo de 0,2 s, y ese
+    /// límite estrecho es el que de verdad aprieta. En el simulador de un runner de CI
+    /// los MISMOS 5 MB por chunks midieron 3,3 s — la máquina, no el código: ahí el
+    /// bucle byte a byte son 5,2 millones de suspensiones y tarda minutos, así que 20 s
+    /// sigue separando las dos cosas sin margen de duda. Un solo número no puede servir
+    /// a los dos entornos: 0,2 s hacía fallar al simulador con el código bueno, y subir
+    /// el límite a 20 s en todas partes tiraría el guard afilado de macOS a la basura.
     @Test("data(for:) de 5 MB no es lenta (regresión: nada de 'for try await byte')")
     func dataLargePayloadIsFast() async throws {
         let host = "xfer-data-5mb.test"
@@ -361,8 +367,14 @@ struct TransferTests {
         let data = try await service.data(for: FileRequest(), progress: nil)
         let elapsed = start.duration(to: .now)
 
+        #if targetEnvironment(simulator)
+        let budget: Duration = .seconds(20)
+        #else
+        let budget: Duration = .milliseconds(200)
+        #endif
+
         #expect(data.count == payload.count)
-        #expect(elapsed < .milliseconds(200), "data(for:) de 5 MB tardó \(elapsed) — ¿volvió el bucle byte a byte?")
+        #expect(elapsed < budget, "data(for:) de 5 MB tardó \(elapsed) — ¿volvió el bucle byte a byte?")
     }
 
     // MARK: - download(to:) — a disco

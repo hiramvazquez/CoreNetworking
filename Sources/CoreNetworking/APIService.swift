@@ -304,7 +304,7 @@ public final class APIService: APIServiceProtocol {
     ///   `retryPolicy` path) still prefers `Retry-After` over the backoff.
     private func performWithRetry<Request: BaseRequest>(
         _ request: Request,
-        transport: (URLRequest) async throws -> (Data, URLResponse)
+        transport: (URLRequest) async throws -> (Data, HTTPURLResponse)
     ) async throws(APIError) -> (data: Data, response: HTTPURLResponse, request: APIError.RequestSummary) {
         let methodAllowsRetry = request.method.isIdempotent || request.allowsNonIdempotentRetry
         var attemptsMade = 0
@@ -392,7 +392,7 @@ public final class APIService: APIServiceProtocol {
     private func performOnce<Request: BaseRequest>(
         _ request: Request,
         attempt: Int,
-        transport: (URLRequest) async throws -> (Data, URLResponse)
+        transport: (URLRequest) async throws -> (Data, HTTPURLResponse)
     ) async throws -> (data: Data, response: HTTPURLResponse, request: APIError.RequestSummary) {
         var urlRequest = try buildURLRequest(from: request)
         let context = RequestContext(
@@ -420,9 +420,9 @@ public final class APIService: APIServiceProtocol {
 
         let summary = APIError.RequestSummary(urlRequest)
         let data: Data
-        let response: URLResponse
+        let httpResponse: HTTPURLResponse
         do {
-            (data, response) = try await transport(urlRequest)
+            (data, httpResponse) = try await transport(urlRequest)
         } catch let pinningFailure as PinningFailure {
             // `URLError(.cancelled)` por un challenge que pinning rechazó
             // llega aquí como `PinningFailure` (lo traduce
@@ -451,14 +451,21 @@ public final class APIService: APIServiceProtocol {
             throw AttemptFailure(error: apiError, context: context)
         }
 
-        // `didReceive` exige `HTTPURLResponse` (no `URLResponse`, que
-        // obligaba a castear en cada interceptor): si la respuesta no lo es,
-        // no hay nada válido que pasarle — directo a `.invalidResponse`.
-        guard let httpResponse = response as? HTTPURLResponse else {
-            let apiError = APIError(code: .invalidResponse, request: summary)
-            await notifyInterceptorsOfFailure(apiError, context: context)
-            throw AttemptFailure(error: apiError, context: context)
-        }
+        // No hay `guard` de "¿es `HTTPURLResponse`?" aquí: `transport` ya está
+        // tipado como `(URLRequest) async throws -> (Data, HTTPURLResponse)`
+        // (no `URLResponse`), así que el propio closure interno de
+        // `execute`/`upload`/`data`/`download` — que es el único que produce
+        // este valor — solo puede entregar un `HTTPURLResponse`. Esto es
+        // consistente con `HTTPTransport.send`/`.download`, que YA declaran
+        // ese tipo de retorno: ningún transporte conforme al protocolo
+        // (`URLSessionTransport`, `InMemoryTransport`, o uno de terceros)
+        // puede producir otra cosa. Antes había un `guard let ... as?
+        // HTTPURLResponse` aquí que lanzaba `.invalidResponse`: el compilador
+        // no lo veía inalcanzable porque el closure se ensanchaba a
+        // `URLResponse` en la firma; con el tipo estrechado, el compilador
+        // demuestra la invariante en vez de que la demuestre un comentario.
+        // Ver `APIError.Code.invalidResponse` para qué implica esto para ese
+        // código público.
 
         for interceptor in interceptors {
             await interceptor.didReceive(httpResponse, data: data, context: context)

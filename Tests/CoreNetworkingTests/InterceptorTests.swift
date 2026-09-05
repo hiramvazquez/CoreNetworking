@@ -120,19 +120,16 @@ struct InterceptorTests {
     // MARK: - didFail exactamente una vez, en TODOS los caminos de fallo
     //
     // `RequestInterceptor.didFail` promete "called exactly once per failed
-    // attempt, regardless of which stage failed". `APIService` tiene SIETE
+    // attempt, regardless of which stage failed". `APIService` tiene SEIS
     // sitios que llaman a `notifyInterceptorsOfFailure`: willSend que lanza
     // (cubierto arriba), status non-2xx y error de transporte genérico
     // (cubiertos arriba), y los cuatro de aquí abajo — cada uno con su propio
-    // `catch` en `performOnce`. El séptimo, la respuesta que no es
-    // `HTTPURLResponse` (`.invalidResponse`), NO tiene test: ni
-    // `InMemoryTransport` ni `URLSessionTransport` pueden producirla, porque
-    // `HTTPTransport.send`/`.download` ya declaran su tipo de retorno como
-    // `HTTPURLResponse` (no `URLResponse`) — un valor de ese tipo estático
-    // siempre pasa `as? HTTPURLResponse`, así que ese `guard` en
-    // `APIService.performOnce` es código muerto con la forma actual del
-    // protocolo. Cubrirlo exigiría debilitar `HTTPTransport` a `URLResponse` en
-    // producción, fuera del alcance de este cambio — ver el informe.
+    // `catch` en `performOnce`. Ya NO hay un séptimo sitio para la respuesta
+    // que no es `HTTPURLResponse`: ese `guard` (que producía
+    // `.invalidResponse`) se eliminó de `performOnce` porque `transport` ahí
+    // está tipado como `(URLRequest) async throws -> (Data, HTTPURLResponse)`
+    // — el compilador prueba que ese camino no existe, en vez de dejarlo como
+    // código muerto sin test posible. Ver `APIError.Code.invalidResponse`.
 
     /// Extrae los `APIError` de los eventos `didFail`, en orden.
     private func didFailErrors(_ events: [RecordingInterceptor.Event]) -> [APIError] {

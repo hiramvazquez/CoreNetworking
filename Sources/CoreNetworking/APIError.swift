@@ -52,7 +52,22 @@ public struct APIError: Error, Sendable {
 
         /// The URL could not be built from the base URL + path (+ query).
         public static let invalidURL = Code("invalidURL")
-        /// The response is not an `HTTPURLResponse`.
+        /// Reservado — este paquete nunca lo lanza.
+        ///
+        /// Existió para una respuesta que no fuera `HTTPURLResponse`, pero
+        /// `HTTPTransport.send`/`.download` declaran su tipo de retorno como
+        /// `HTTPURLResponse` (no `URLResponse`): ningún `HTTPTransport`
+        /// conforme al protocolo — el de este paquete o uno de terceros —
+        /// puede entregar otra cosa, porque el propio protocolo se lo
+        /// impide a nivel de tipos. `APIService` explota justo esa garantía
+        /// (ver el comentario en `performOnce`, `APIService.swift`) y por
+        /// eso nunca construye este código.
+        ///
+        /// Se conserva como `static let` público — retirarlo sería una
+        /// rotura mayor de API — para el código que ya compara contra él
+        /// (con `default:`, como manda `Code`) y por si un futuro cambio de
+        /// contrato en `HTTPTransport` (una versión mayor que relaje el tipo
+        /// de retorno) volviera a necesitarlo.
         public static let invalidResponse = Code("invalidResponse")
         /// The transport failed before a response arrived. `underlying` is
         /// the `URLError` (see `urlError`).

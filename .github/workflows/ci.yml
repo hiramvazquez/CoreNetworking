@@ -4,16 +4,33 @@
 # `Examples/APIClientApp`, y DocC (snippets sincronizados + docbuild sin warnings).
 #
 # - `mutation`: mutation testing con `swift-mutation-testing` (config en
-#   `.swift-mutation-testing.yml`) — NO corre en cada push/PR, solo por `schedule` (semanal)
-#   o a mano (`workflow_dispatch`): cada mutante recompila y repite la suite, así que la
-#   corrida completa tarda minutos por decenas de mutantes, demasiado para el bucle normal
-#   de PR. El umbral en `.swift-mutation-testing.yml` es un TRINQUETE fijado al score medido
-#   la última vez que se corrió a propósito (no un objetivo aspiracional): el job falla si
-#   el score BAJA de ahí, y el umbral se sube a mano cuando la suite mejora de verdad. El
-#   informe (JSON + HTML) sube como artefacto del job para poder mirarlo sin volver a
-#   correr nada. Los otros cuatro jobs llevan `if: github.event_name != 'schedule'` para que
-#   el disparo semanal solo corra `mutation` (si no, se repetiría el CI completo cada
-#   semana sin que nadie lo haya pedido).
+#   `.swift-mutation-testing.yml`) — NO corre en cada push/PR, solo por su propio `schedule`
+#   (semanal) o a mano (`workflow_dispatch`): cada mutante recompila y repite la suite, así
+#   que la corrida completa tarda minutos por decenas de mutantes, demasiado para el bucle
+#   normal de PR. El umbral en `.swift-mutation-testing.yml` es un TRINQUETE fijado al score
+#   medido la última vez que se corrió a propósito (no un objetivo aspiracional): el job
+#   falla si el score BAJA de ahí, y el umbral se sube a mano cuando la suite mejora de
+#   verdad. El informe (JSON + HTML) sube como artefacto del job para poder mirarlo sin
+#   volver a correr nada.
+# - `red-real`: la suite de red REAL y opt-in de `Tests/CoreNetworkingTests/LiveNetworkTests.swift`
+#   (TLS/pinning contra un handshake en vivo, HTTP real contra `dummyjson.com`/`httpbin.org`)
+#   — apagada por defecto en `swift test` normal (ver el doc comment del propio fichero) y
+#   NUNCA en el camino de push/PR: un backend de terceros que se cae, cambia de
+#   comportamiento o limita por rate convertiría el CI de cada PR, determinista y de
+#   ~0,1 s, en uno inestable — y la reacción humana a un CI inestable es dejar de mirarlo.
+#   Corre sola (~5 s, nada que ver con los ~13 min de `mutation`) por su propio `schedule`
+#   DIARIO y por `workflow_dispatch`, para detectar pronto una deriva real (un backend que
+#   cambia de comportamiento, una versión de macOS/CFNetwork que deja de disparar un
+#   challenge de pinning como se esperaba) sin arriesgar el bucle normal de PR. Un fallo NO
+#   bloquea nada — este job nunca corre en push/PR — pero SÍ debe verse: cada test de esta
+#   suite anota en su propio mensaje de fallo (`annotatingBackendFailures`, en el propio
+#   fichero de test) si la causa pinta a backend caído o a una regresión real de
+#   CoreNetworking, así que el log del job basta para decidir sin más triage si hace falta
+#   abrir una incidencia o simplemente esperar a que el backend vuelva.
+# - Los otros cuatro jobs (`lint`/`test`/`example`/`docs`) llevan
+#   `if: github.event_name != 'schedule'` para que NINGÚN disparo por cron repita el CI
+#   completo (cada uno de `mutation`/`red-real` distingue SU PROPIO cron con
+#   `github.event.schedule`, para no dispararse el uno al otro).
 name: CI
 
 on:
@@ -22,8 +39,11 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    # Lunes 06:00 UTC. `workflow_dispatch` de arriba permite lanzarlo a mano sin esperar.
+    # Lunes 06:00 UTC: `mutation`. `workflow_dispatch` de arriba permite lanzarlo a mano.
     - cron: '0 6 * * 1'
+    # Diario 07:00 UTC: `red-real` — más barato que `mutation` (segundos, no minutos), así
+    # que una cadencia diaria detecta antes una deriva de backend/plataforma sin coste real.
+    - cron: '0 7 * * *'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -93,9 +113,27 @@ jobs:
             ! echo "$log" | grep -qE "warning:|error:"
           done
 
+  red-real:
+    name: Red real (opt-in — TLS/pinning en vivo, HTTP contra backends públicos)
+    # Su PROPIO cron ('0 7 * * *'), no el de `mutation` ('0 6 * * 1'): sin esta distinción,
+    # cualquiera de los dos `schedule` de arriba dispararía AMBOS jobs (la condición de
+    # `mutation`, antes de este cambio, era solo `event_name == 'schedule'`), duplicando la
+    # corrida cara de `mutation` cada lunes. `workflow_dispatch` sigue lanzando los dos —
+    # un disparo manual es una petición explícita de "corre todo lo especial".
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 7 * * *'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: swift test (CORENETWORKING_LIVE_NETWORK_TESTS=1) — solo LiveNetworkTests
+        run: CORENETWORKING_LIVE_NETWORK_TESTS=1 swift test --filter LiveNetworkTests
+
   mutation:
     name: Mutation testing (swift-mutation-testing)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Su PROPIO cron ('0 6 * * 1'), no el diario de `red-real` — ver el comentario de arriba.
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 6 * * 1'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4

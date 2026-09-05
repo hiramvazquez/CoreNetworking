@@ -100,3 +100,47 @@ faltaba el stub. `.unstubbed` vive en `CoreNetworkingTestSupport`, no en `CoreNe
 
 Nada de `CoreNetworkingTestSupport` viaja en el binario de producción: es un producto
 aparte.
+
+## Red real (opt-in): `LiveNetworkTests`
+
+Los 226 tests de arriba corren contra `InMemoryTransport`/`MockURLProtocol` — dominios
+falsos, sin socket real detrás. Eso es perfecto para el pipeline, pero ciego a todo lo que
+vive POR DEBAJO de la costura del transporte: un handshake TLS real (el pinning nunca ha
+visto un `didReceive challenge:` de verdad — `MockURLProtocol` sustituye el transporte
+DESPUÉS de la fase de TLS), `Content-Encoding: gzip` real, una redirección servida por un
+servidor real, un `Retry-After` que no escribimos nosotros, o un timeout contra una
+respuesta genuinamente lenta.
+
+`Tests/CoreNetworkingTests/LiveNetworkTests.swift` cierra ese hueco contra dos backends
+públicos — `dummyjson.com` (el backend de referencia de AppStarter: payload real, 404 real,
+y el host contra el que se mide el pinning en un handshake TLS en vivo) y `httpbin.org`
+(comportamientos de transporte: redirecciones, gzip, un cuerpo en varios frames, `Retry-After`
+real, 429 real, timeout real).
+
+**Por qué está apagada por defecto.** Un backend de terceros que se cae, cambia de
+comportamiento o limita por rate convertiría un suite determinista de ~0,1 s en uno
+inestable — y la reacción humana a un CI inestable es dejar de mirarlo. La suite entera
+lleva `@Suite(.enabled(if:))` leyendo la variable de entorno
+`CORENETWORKING_LIVE_NETWORK_TESTS`: sin ella, ni siquiera se ejecuta (Swift Testing la
+reporta como "skipped", no como fallo) — `swift test` a secas nunca toca la red.
+
+**Cómo lanzarla a mano:**
+
+```bash
+CORENETWORKING_LIVE_NETWORK_TESTS=1 swift test --filter LiveNetworkTests
+```
+
+En CI corre sola, por su propio `schedule` (diario) y por `workflow_dispatch` — nunca en
+push/PR. Ver el job `red-real` en `.github/workflows/ci.yml` y el doc comment del propio
+fichero de test para el porqué completo, incluido por qué NO hay un servidor HTTPS local
+con certificado autofirmado (la vía pública para un `SecIdentity` de servidor pasa por el
+llavero, y eso puede colgar un runner headless esperando un diálogo que nadie puede
+responder).
+
+**Qué NO debe entrar aquí.** Nada que un mock ya pueda producir: la precedencia de
+interceptores, el backoff de retry, la lógica pura de la configuración de pinning, el
+filtrado de headers sensibles en redirecciones (`RedirectSecurityTests` ya lo prueba con
+sockets loopback reales — eso YA es "real": mismo `URLSession`/CFNetwork, la única
+diferencia con un host de Internet es la resolución DNS). Eso va en un test determinista,
+con un mock. Si un test nuevo en `LiveNetworkTests` empieza a parecerse a uno del pipeline,
+sobra ahí — muévelo.

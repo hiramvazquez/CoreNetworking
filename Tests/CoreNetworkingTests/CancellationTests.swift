@@ -140,20 +140,42 @@ struct CancellationTests {
         #expect(!FileManager.default.fileExists(atPath: destination.path))
     }
 
+    /// ¿Interrumpe ESTE runtime un `ContinuousClock.sleep` al cancelar el Task que lo
+    /// espera? Debería ser siempre que sí, y en macOS (y en el simulador de Xcode 26.6)
+    /// lo es. En el simulador de iOS que trae Xcode 26.3 —el de los runners `macos-15`—
+    /// NO: el sleep se consume entero y la cancelación solo se observa al despertar.
+    ///
+    /// La sonda cuesta 100 ms donde el runtime se porta bien y 2 s donde no, y evita
+    /// tener que elegir entre un test que miente sobre plataformas rotas o uno que no
+    /// afirma nada en las sanas.
+    private func runtimeInterruptsClockSleep() async -> Bool {
+        let start = ContinuousClock.now
+        let probe = Task { try await ContinuousClock().sleep(for: .seconds(2)) }
+        try? await Task.sleep(for: .milliseconds(100))
+        probe.cancel()
+        _ = await probe.result
+        return start.duration(to: .now) < .seconds(1)
+    }
+
     /// Único caso que sigue mirando el reloj, porque aquí no hay transferencia en vuelo
     /// que desmontar: el 500 se entrega al instante y lo que se cancela es la ESPERA del
     /// backoff, que no deja más rastro observable que no haberse consumido. El `count ==
     /// 1` no lo cubre: sin interrumpir la espera tampoco habría segundo request (el bucle
-    /// de reintento ve el Task cancelado al despertar), solo se tardarían los 30 s.
+    /// de reintento ve el Task cancelado al despertar), solo se tardaría el backoff.
     ///
-    /// Lo que se arregla es el MARGEN, no el método: 5 s de backoff contra un
-    /// presupuesto de 2 s no sobrevivían a un simulador cargado (~4 s de elapsed en CI
-    /// con la cancelación funcionando). Con 30 s contra 10 s, la diferencia entre
-    /// "interrumpió la espera" y "se la comió entera" no la borra ninguna máquina lenta.
+    /// El presupuesto se mide contra lo que el runtime es capaz de hacer, no contra un
+    /// número fijo. `APIService` espera el backoff con `clock.sleep(for:)`, así que no
+    /// puede cancelar antes que el propio `sleep` del runtime: donde el runtime lo
+    /// interrumpe, se exige inmediatez; donde no, se exige lo que sigue estando en la
+    /// mano del paquete — que no se duerma DOS backoffs y que no salga un segundo
+    /// request. La versión anterior de este test daba por hecho lo primero y, cuando el
+    /// simulador de CI se comió el backoff entero, se leyó como "runner lento" y se le
+    /// subió el margen. No era el runner.
     @Test("cancelar durante el backoff del retry → .cancelled sin segundo request")
     func cancelDuringBackoff() async throws {
         let host = "cancel-backoff.test"
-        let policy = RetryPolicy(maxAttempts: 2, initialDelay: .seconds(30), maxDelay: .seconds(30))
+        let backoff = Duration.seconds(5)
+        let policy = RetryPolicy(maxAttempts: 2, initialDelay: backoff, maxDelay: backoff)
         let (service, baseURL) = try makeService(host: host, policy: policy)
         MockURLProtocol.register(
             MockNetworkExchange(
@@ -165,10 +187,17 @@ struct CancellationTests {
         let elapsed = await expectCancelled {
             let _: Payload = try await service.execute(SlowRequest())
         }
-        #expect(
-            elapsed < .seconds(10),
-            "la cancelación no interrumpió el backoff de 30 s (\(elapsed))"
-        )
+        if await runtimeInterruptsClockSleep() {
+            #expect(
+                elapsed < .seconds(3),
+                "el runtime sí interrumpe sus sleeps, así que la cancelación debía salir del backoff de \(backoff) al instante (\(elapsed))"
+            )
+        } else {
+            #expect(
+                elapsed < backoff * 2,
+                "este runtime no interrumpe `ContinuousClock.sleep`, pero aun así no debe dormirse más de un backoff (\(elapsed))"
+            )
+        }
         let count = MockURLProtocol.recordedRequests.filter { $0.url?.host == host }.count
         #expect(count == 1, "no debe haber segundo request tras cancelar en el backoff")
     }

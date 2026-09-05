@@ -360,6 +360,14 @@ public final class APIService: APIServiceProtocol {
     }
 
     /// Sleeps `delay` on `clock`, mapping cancellation to `APIError(.cancelled)`.
+    ///
+    /// La cancelación se OBSERVA tan pronto como el runtime interrumpa su propio
+    /// `sleep`, ni antes ni después. Medido: el simulador de iOS de Xcode 26.3 no lo
+    /// interrumpe —consume el backoff entero y solo entonces lanza— mientras que macOS y
+    /// el simulador de Xcode 26.6 sí. El contrato no cambia con eso (ningún request de
+    /// más, y el error sigue siendo `.cancelled`); la latencia de la cancelación, sí. Ver
+    /// `CancellationTests.cancelDuringBackoff`, que mide esa capacidad del runtime en vez
+    /// de darla por hecha, y la nota en <doc:Retry>.
     private func sleepOrThrowCancelled(
         _ delay: Duration,
         requestSummary: APIError.RequestSummary?

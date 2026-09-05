@@ -55,6 +55,19 @@ intento fallido: el primero que NO devuelva `.doNotRetry` decide; si todos devue
 acota ambos caminos. Una decisión `.retry`/`.retryAfter` hace que el MISMO request vuelva a
 pasar por `willSend` — el caso de uso principal es <doc:Authentication>.
 
+## Cancelación durante el backoff
+
+Cancelar el `Task` que espera un request cancela también la espera entre intentos: no sale
+un segundo request y el error es `APIError(code: .cancelled)`. Eso vale en todas partes.
+
+Lo que NO está garantizado en todas partes es CUÁNDO se observa. El backoff se espera con
+`clock.sleep(for:)`, así que la inmediatez es la del runtime: en macOS y en runtimes de iOS
+recientes el sleep se interrumpe al instante, pero en el simulador de iOS que trae Xcode
+26.3 se consume entero y la cancelación solo aflora al despertar — con un backoff de 30 s,
+30 s de espera antes de recibir el `.cancelled`. El contrato se cumple igual (ningún request
+de más), pero si tu UI depende de que la cancelación vuelva rápido, cuéntalo entre los
+riesgos de los backoffs largos.
+
 ## Topics
 
 - ``RetryPolicy``

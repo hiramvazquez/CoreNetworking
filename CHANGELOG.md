@@ -18,15 +18,23 @@ Todos los cambios notables de este paquete se documentan en este fichero. El for
 
 ### Corregido
 
-- **Los cinco tests de cancelación dejan de medir el reloj.** Assertaban "tardó menos de
-  2 s, luego se canceló" contra una latencia de mock de 5 s: la misma afirmación por vía
-  indirecta, y falsa en cuanto la máquina va cargada. En el simulador de un runner de CI
-  fallaban los cinco a la vez con ~4 s de elapsed y la cancelación funcionando — la máquina,
-  no el paquete. Los cuatro que tienen transferencia en vuelo pasan a exigir la señal del
-  mock; verificado que detectan la regresión (con `stopLoading` amputado, fallan por
-  `tornDown`, no por un timeout genérico). El quinto — cancelar durante el backoff — no
-  tiene entrega que desmontar, así que sigue con reloj, pero con el margen arreglado: 30 s
-  de backoff contra un presupuesto de 10 s en vez de 5 contra 2.
+- **Los cuatro tests de cancelación con transferencia en vuelo dejan de medir el reloj.**
+  Assertaban "tardó menos de 2 s, luego se canceló" contra una latencia de mock de 5 s: la
+  misma afirmación por vía indirecta, y falsa en cuanto la máquina va cargada. Pasan a
+  exigir la señal del mock; verificado que detectan la regresión (con `stopLoading`
+  amputado, fallan por `tornDown`, no por un timeout genérico).
+- **El quinto —cancelar durante el backoff— mide contra la capacidad del runtime, no
+  contra un número.** Aquí no hay entrega que desmontar: lo que se cancela es la espera, y
+  el reloj es la única vía. Y el reloj estaba diciendo la verdad: en el simulador de iOS de
+  Xcode 26.3 (el de los runners de CI) `ContinuousClock.sleep` NO se interrumpe al cancelar
+  el Task — se consume el backoff entero y la cancelación solo aflora al despertar. Con 5 s
+  de backoff eso daban ~4 s de elapsed, que se leyeron como "runner lento"; subir el margen
+  a 30 s contra 10 s lo desenmascaró: 40,8 s. El test hace ahora una sonda de esa capacidad
+  y exige inmediatez donde el runtime la permite y "ni un backoff de más, ni un request de
+  más" donde no. `APIService` espera el backoff con `clock.sleep(for:)`, así que no puede
+  ser más rápido que el `sleep` del runtime; el contrato observable (`.cancelled`, sin
+  segundo request) se cumple en los dos casos. Documentado en <doc:Retry> y en
+  `sleepOrThrowCancelled`.
 - **El presupuesto del test de 5 MB se escala al entorno.** `< 0,2 s` es el límite
   estrecho que aprieta de verdad en macOS, pero en el simulador de CI los MISMOS 5 MB por
   chunks midieron 3,3 s y hacían fallar el test con el código bueno. Bajo

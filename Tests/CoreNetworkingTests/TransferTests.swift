@@ -29,10 +29,40 @@ final class ProgressLog: Sendable {
 /// `TaskDelegate` nunca mueve nada a `destination`. Un socket real en
 /// 127.0.0.1 sí atraviesa el camino de descarga completo.
 final class LoopbackHTTPServer: @unchecked Sendable {
+    /// Una respuesta enlatada para UNA conexión. `RedirectSecurityTests` usa
+    /// varias en secuencia (una por servidor real que hay entre el cliente
+    /// y el destino final de una redirección): el propio servidor de origen
+    /// puede responder 302 en su primera conexión y 200 en la segunda, sin
+    /// levantar un segundo proceso — así se modela una redirección al MISMO
+    /// origen (mismo host:puerto), que por construcción no puede lograrse
+    /// con dos `LoopbackHTTPServer` distintos (cada uno reserva su propio
+    /// puerto).
+    struct Response: Sendable {
+        let statusCode: Int
+        let headers: [String: String]
+        let body: Data
+
+        init(statusCode: Int = 200, headers: [String: String] = [:], body: Data = Data()) {
+            self.statusCode = statusCode
+            self.headers = headers
+            self.body = body
+        }
+    }
+
     let port: UInt16
     private let listenSocket: Int32
+    /// Headers de la petición recibida en cada conexión, en orden, en
+    /// minúsculas (comparación case-insensitive por comodidad de los
+    /// tests). Protegido porque se escribe desde el hilo del servidor y se
+    /// lee desde el hilo del test.
+    private let capturedRequests = OSAllocatedUnfairLock(initialState: [[String: String]]())
 
-    init(statusCode: Int = 200, headers: [String: String] = [:], body: Data) throws {
+    /// Sirve `responses` en orden, una por conexión entrante (backlog =
+    /// `responses.count`, para que ninguna quede en cola indefinidamente si
+    /// el cliente abre la siguiente antes de que el hilo del servidor haya
+    /// vuelto a `accept`).
+    init(responses: [Response]) throws {
+        precondition(!responses.isEmpty, "LoopbackHTTPServer necesita al menos una Response")
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else {
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
@@ -54,7 +84,7 @@ final class LoopbackHTTPServer: @unchecked Sendable {
             close(fd)
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
         }
-        guard listen(fd, 1) == 0 else {
+        guard listen(fd, Int32(responses.count)) == 0 else {
             close(fd)
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
         }
@@ -70,33 +100,71 @@ final class LoopbackHTTPServer: @unchecked Sendable {
         self.listenSocket = fd
         self.port = UInt16(bigEndian: assigned.sin_port)
 
-        var headerText = "HTTP/1.1 \(statusCode) \(HTTPURLResponse.localizedString(forStatusCode: statusCode))\r\n"
-        headerText += "Content-Length: \(body.count)\r\n"
-        headerText += "Connection: close\r\n"
-        for (key, value) in headers {
-            headerText += "\(key): \(value)\r\n"
+        let payloads = responses.map { response -> Data in
+            var headerText =
+                "HTTP/1.1 \(response.statusCode) \(HTTPURLResponse.localizedString(forStatusCode: response.statusCode))\r\n"
+            headerText += "Content-Length: \(response.body.count)\r\n"
+            headerText += "Connection: close\r\n"
+            for (key, value) in response.headers {
+                headerText += "\(key): \(value)\r\n"
+            }
+            headerText += "\r\n"
+            return Data(headerText.utf8) + response.body
         }
-        headerText += "\r\n"
-        let payload = Data(headerText.utf8) + body
 
         let socketFD = listenSocket
+        let capturedRequestsRef = capturedRequests
         Thread.detachNewThread {
-            let clientFD = accept(socketFD, nil, nil)
-            guard clientFD >= 0 else { return }
-            var requestBuffer = [UInt8](repeating: 0, count: 4096)
-            _ = recv(clientFD, &requestBuffer, requestBuffer.count, 0)
-            payload.withUnsafeBytes { raw in
-                var offset = 0
-                while offset < raw.count {
-                    let sent = write(clientFD, raw.baseAddress!.advanced(by: offset), raw.count - offset)
-                    guard sent > 0 else { break }
-                    offset += sent
+            for payload in payloads {
+                let clientFD = accept(socketFD, nil, nil)
+                guard clientFD >= 0 else { return }
+                var requestBuffer = [UInt8](repeating: 0, count: 4096)
+                let bytesRead = recv(clientFD, &requestBuffer, requestBuffer.count, 0)
+                if bytesRead > 0 {
+                    let requestText = String(decoding: requestBuffer[0..<bytesRead], as: UTF8.self)
+                    let headers = Self.parseHeaders(from: requestText)
+                    capturedRequestsRef.withLock { $0.append(headers) }
                 }
+                payload.withUnsafeBytes { raw in
+                    var offset = 0
+                    while offset < raw.count {
+                        let sent = write(clientFD, raw.baseAddress!.advanced(by: offset), raw.count - offset)
+                        guard sent > 0 else { break }
+                        offset += sent
+                    }
+                }
+                shutdown(clientFD, Int32(SHUT_WR))
+                close(clientFD)
             }
-            shutdown(clientFD, Int32(SHUT_WR))
-            close(clientFD)
             close(socketFD)
         }
+    }
+
+    convenience init(statusCode: Int = 200, headers: [String: String] = [:], body: Data) throws {
+        try self.init(responses: [Response(statusCode: statusCode, headers: headers, body: body)])
+    }
+
+    /// Headers (nombre en minúsculas → valor) de la petición recibida en la
+    /// conexión `index` (0 = primera). `nil` si esa conexión aún no ha
+    /// llegado — llamar solo DESPUÉS de un `await` que garantice que el
+    /// cliente ya completó esa petición.
+    func receivedHeaders(at index: Int = 0) -> [String: String]? {
+        capturedRequests.withLock { $0.indices.contains(index) ? $0[index] : nil }
+    }
+
+    /// Parseo mínimo: nombre de header en minúsculas → valor, ignorando la
+    /// línea de petición (`GET /path HTTP/1.1`) y parando en la línea vacía
+    /// que separa headers de cuerpo.
+    private static func parseHeaders(from requestText: String) -> [String: String] {
+        var headers: [String: String] = [:]
+        for line in requestText.components(separatedBy: "\r\n").dropFirst() {
+            if line.isEmpty { break }
+            guard let colonIndex = line.firstIndex(of: ":") else { continue }
+            let name = line[line.startIndex..<colonIndex].trimmingCharacters(in: .whitespaces).lowercased()
+            let value = line[line.index(after: colonIndex)...].trimmingCharacters(in: .whitespaces)
+            headers[name] = value
+        }
+        return headers
     }
 
     var url: URL { URL(string: "http://127.0.0.1:\(port)/file")! }

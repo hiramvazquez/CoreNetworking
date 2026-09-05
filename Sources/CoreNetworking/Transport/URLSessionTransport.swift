@@ -13,6 +13,7 @@ import os
 public final class URLSessionTransport: HTTPTransport {
     private let session: URLSession
     private let pinning: SSLPinningConfiguration?
+    private let redirectPolicy: RedirectPolicy
 
     /// Creates a transport with its own `URLSession`.
     ///
@@ -22,11 +23,21 @@ public final class URLSessionTransport: HTTPTransport {
     ///     integration tests (`MockURLProtocol`).
     ///   - pinning: SSL pinning configuration (default: none — system TLS
     ///     validation only).
+    ///   - redirectPolicy: How 3xx redirects are handled (default:
+    ///     ``RedirectPolicy/followSanitizingCrossOrigin``, the safe default —
+    ///     see its doc comment for the measured platform behavior it
+    ///     corrects). Pinning re-applies automatically after a redirect to a
+    ///     new host regardless of this setting: it is evaluated per
+    ///     `didReceive challenge:`, which fires again for the new host on
+    ///     the SAME per-task `TaskDelegate` — see <doc:Pinning> and
+    ///     `TaskDelegate.urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:)`.
     public init(
         configuration: URLSessionConfiguration = .default,
-        pinning: SSLPinningConfiguration? = nil
+        pinning: SSLPinningConfiguration? = nil,
+        redirectPolicy: RedirectPolicy = .followSanitizingCrossOrigin
     ) {
         self.pinning = pinning
+        self.redirectPolicy = redirectPolicy
         // `delegate: nil` a nivel de sesión: cada llamada (`send`/`download`)
         // pasa su propio `TaskDelegate` a `session.data(for:delegate:)` /
         // `session.upload(for:from:delegate:)` / `session.download(for:delegate:)`.
@@ -43,7 +54,7 @@ public final class URLSessionTransport: HTTPTransport {
     }
 
     public func send(_ request: URLRequest, progress: TransferProgress?) async throws -> (Data, HTTPURLResponse) {
-        let taskDelegate = TaskDelegate(pinning: pinning, progress: progress)
+        let taskDelegate = TaskDelegate(pinning: pinning, progress: progress, redirectPolicy: redirectPolicy)
         do {
             let (data, response): (Data, URLResponse)
             if let body = request.httpBody {
@@ -79,7 +90,12 @@ public final class URLSessionTransport: HTTPTransport {
         to destination: URL,
         progress: TransferProgress?
     ) async throws -> HTTPURLResponse {
-        let taskDelegate = TaskDelegate(pinning: pinning, progress: progress, destination: destination)
+        let taskDelegate = TaskDelegate(
+            pinning: pinning,
+            progress: progress,
+            destination: destination,
+            redirectPolicy: redirectPolicy
+        )
         do {
             let (temporaryLocation, response) = try await session.download(for: request, delegate: taskDelegate)
             if let fileMoveError = taskDelegate.fileMoveError {

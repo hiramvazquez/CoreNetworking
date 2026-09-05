@@ -125,7 +125,7 @@ public struct NetworkingConfiguration: Sendable {
     static let unsetFoundationResourceTimeout: TimeInterval = 604_800
 
     /// Valor de `timeoutIntervalForResource` que aplica el suelo cuando
-    /// detecta que nadie lo tocó (ver ``unsetFoundationResourceTimeout``).
+    /// detecta que nadie lo tocó (604800 s, el default de Foundation).
     ///
     /// 60 s: el doble del timeout de INACTIVIDAD por request
     /// (`BaseRequest.timeout`, 30 s por defecto — mide huecos entre paquetes,
@@ -167,7 +167,7 @@ public struct NetworkingConfiguration: Sendable {
     ///   TLS, es un protocolo distinto (datagramas), y este paquete no tiene
     ///   base para imponer nada ahí.
     /// - `timeoutIntervalForResource`: solo se toca si sigue en el sentinel de
-    ///   "nadie lo tocó" (``unsetFoundationResourceTimeout``, los 7 días de
+    ///   "nadie lo tocó" (`604800` s, los 7 días de
     ///   Foundation). Cualquier otro valor — el que ponga
     ///   ``defaultResourceTimeoutFloor``, el `120` del ejemplo de
     ///   <doc:Transport>, o cualquier cosa que el consumidor haya elegido a

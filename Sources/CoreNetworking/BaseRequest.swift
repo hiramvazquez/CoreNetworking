@@ -141,6 +141,18 @@ public protocol BaseRequest: Sendable {
     var queryItems: [URLQueryItem] { get }
 
     /// Request timeout. Default: 30 seconds.
+    ///
+    /// This is `URLRequest.timeoutInterval`: an INACTIVITY timeout between packets, not a
+    /// ceiling on how long the whole request may take. A server that keeps dribbling bytes
+    /// never trips it.
+    ///
+    /// - Important: with `waitsForConnectivity` enabled — which
+    ///   `NetworkingConfiguration.defaultSessionConfiguration()` does — this timeout is
+    ///   suppressed entirely against a connected server that simply sends nothing.
+    ///   Measured against a real host, not inferred: see `LiveNetworkTests`. The effective
+    ///   ceiling in that case is the session's `timeoutIntervalForResource`, which
+    ///   `NetworkingConfiguration.enforceSecurityFloor(on:)` pins to 60 seconds — Foundation's
+    ///   own default is 7 days.
     var timeout: Duration { get }
 
     /// Opt-in to retry non-idempotent methods (POST/PATCH).

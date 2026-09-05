@@ -6,6 +6,112 @@ Todos los cambios notables de este paquete se documentan en este fichero. El for
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-09-05
+
+### Cambiado
+
+- **`APIError.Code.invalidResponse` pasa a estar documentado como reservado**: el paquete
+  nunca lo lanza. Existía para una respuesta que no fuera `HTTPURLResponse`, pero
+  `HTTPTransport.send`/`.download` declaran ese tipo de retorno, así que ningún transporte
+  conforme puede entregar otra cosa. El closure interno de `performOnce` se estrecha a
+  `HTTPURLResponse` y el `guard` desaparece — no borrado por criterio, sino porque el
+  compilador prueba que no puede ejecutarse. El `static let` público se conserva (retirarlo
+  sería rotura mayor) por si un futuro cambio de contrato en `HTTPTransport` volviera a
+  necesitarlo.
+
+### Pruebas
+
+- **Trinquete de mutación 70 → 72**, con el score en **78,2 %** (122/156) y los
+  supervivientes de 19 a 14. Cuatro muertos nuevos en `TaskDelegate`: la rama `else` de
+  `isSameOrigin` (que ninguna redirección de `RedirectSecurityTests` ejercitaba, porque
+  todas comparten scheme y host de loopback y solo difieren en puerto), el gate de 2xx de
+  `didFinishDownloadingTo` sin respuesta fiable, el `Content-Length` exactamente `0` (el
+  mutante dividía entre cero en silencio), y el caso degenerado de redirección sin URL de
+  destino.
+- Seis supervivientes se descartan con argumento verificado, no supuesto: dos mutantes
+  equivalentes de verdad (`enforceSecurityFloor` con TLS ya en 1.2, y
+  `resolvingAgainstBaseURL` — comprobado con un script aislado que esa flag solo importa
+  cuando `baseURL != nil`, y `.appending(path:)` nunca produce eso), el `super.init()`
+  implícito (verificado con una clase `NSObject` aparte y warnings como errores), dos
+  `NetLog` que `OSLogStore` no persiste de forma fiable, y `finishTasksAndInvalidate`, cuyo
+  efecto solo es observable de forma asíncrona y no determinista.
+- El test del caso degenerado de redirección lleva `.timeLimit(.minutes(1))`: sin él, ante
+  la regresión que cubre se COLGARÍA en vez de fallar, y en CI eso se come el timeout del
+  job entero sin decir por qué. Un test que cuelga no es un test que falla.
+
+### Cambiado
+
+- **`APIService.performOnce`**: el `guard let httpResponse = response as? HTTPURLResponse`
+  era inalcanzable por construcción — `HTTPTransport.send`/`.download` ya declaran su tipo
+  de retorno como `HTTPURLResponse`, así que ningún transporte conforme al protocolo (de
+  este paquete o de terceros) podía entregar otra cosa; el compilador no lo veía porque el
+  closure interno de `performWithRetry`/`performOnce` ensanchaba el tipo a `URLResponse`.
+  Se estrecha ese closure a `(URLRequest) async throws -> (Data, HTTPURLResponse)` y se
+  elimina el `guard`: el compilador demuestra ahora la invariante en vez de dejarla como
+  código muerto sin test posible (`InterceptorTests.swift` ya documentaba el caso como
+  imposible de cubrir con un test). `APIError.Code.invalidResponse` se conserva — es API
+  pública y retirarla sería
+  una rotura mayor — pero su doc pasa a decir la verdad: reservado, este paquete nunca lo
+  lanza.
+
+### Pruebas
+
+- Mutación: siete tests nuevos en `TaskDelegateTests.swift` matan cuatro supervivientes de
+  `TaskDelegate.swift` (política de redirecciones y progreso de descarga, código que entró
+  sin cobertura a nivel de mutante):
+  - `isSameOrigin`: cuatro tests directos sobre la función pura (mismo origen, distinto
+    scheme, distinto host, distinto puerto) — mata el `else { return false }` → `return
+    true` que ningún test end-to-end de `RedirectSecurityTests` ejercitaba (todas sus
+    redirecciones comparten scheme y host de loopback, solo difieren en puerto, así que
+    nunca entraban por el `guard` — siempre resolvían por la comparación de puertos final).
+  - `didFinishDownloadingTo` con una tarea sin `HTTPURLResponse` válida (`.response ==
+    nil`): mata `isSuccess = false` → `true` en la rama `else` — sin esto, un downloadTask
+    sin respuesta fiable movería el cuerpo a `destination` en vez de descartarlo.
+  - `didReceive(dataTask:didReceive:)` con `Content-Length` EXACTAMENTE `0` (antes solo se
+    probaba `-1`, la tarea inerte): mata `expectedLength > 0` → `>= 0`, que sin el test
+    dividía entre cero silenciosamente (`min(1.0, .infinity) == 1.0`, progreso reportado
+    igual).
+  - `willPerformHTTPRedirection` con `newRequest.url == nil` (caso degenerado que
+    `URLSession` nunca produce en la práctica, pero que el tipo `URLRequest.url:
+    URL?` no impide a nivel de tipos): mata la eliminación de
+    `completionHandler(request)` en el `guard`-`else` — sin la llamada, la tarea se
+    queda colgada esperando una decisión de redirección que nunca llega (validado
+    rompiendo el código a propósito: el test se queda esperando en vez de fallar con
+    una aserción, la misma señal que ve `swift-mutation-testing` al clasificar este
+    mutante como `Timeout`).
+
+### Documentación
+
+- Cuatro supervivientes de mutación adicionales, evaluados y descartados por ser
+  mutantes EQUIVALENTES o poco prácticos de verificar (no forzados a test de relleno):
+  - `NetworkingConfiguration.enforceSecurityFloor`: `rawValue < minimumTLSVersion.rawValue`
+    → `<=`. Cuando la versión TLS ya está exactamente en el suelo (`.TLSv12`), ambas ramas
+    reasignan el MISMO valor — indistinguible por cualquier test, igual que el mutante ya
+    documentado de `RetryPolicy.swift:86`.
+  - `APIService.buildURLRequest`: `resolvingAgainstBaseURL: true` → `false`. La `URL` que
+    recibe `URLComponents` viene siempre de `configuration.baseURL.appending(path:)`, que
+    por contrato de esa API de Foundation nunca produce una `URL` con `.baseURL` no-nulo —
+    y `resolvingAgainstBaseURL` solo tiene efecto cuando `.baseURL` no es `nil` (verificado
+    empíricamente). Equivalente por construcción, no por casualidad.
+  - `TaskDelegate.init`: eliminar el `super.init()` explícito. Verificado empíricamente
+    (compilando una clase `NSObject` equivalente sin la llamada, con
+    `-warnings-as-errors`): el compilador de Swift inserta la llamada implícita cuando el
+    inicializador no la escribe y el superclass tiene un inicializador sin argumentos —
+    mismo binario resultante, mutante equivalente.
+  - `TaskDelegate`, dos `NetLog` adicionales (`.pinning.error` en el challenge de pinning,
+    `.network.notice` en el saneado cross-origin): misma razón ya documentada para los seis
+    `NetLog.debug/error(...)` de `RequestInterceptor` — `OSLogStore` solo persiste
+    `.error`/`.fault` de forma fiable, y aun así un test contra él es frágil y depende del
+    entorno de CI. Se extiende el argumento existente a estos dos sitios nuevos en vez de
+    repetir la justificación.
+  - `URLSessionTransport.deinit`: eliminar `session.finishTasksAndInvalidate()`. Fuera del
+    alcance de esta tarea tocar `URLSessionTransport.swift`, y aunque se pudiera, el efecto
+    solo es observable de forma asíncrona y dependiente de temporización real de
+    `URLSession` (verificado con un experimento aislado: la sesión sigue viva mientras
+    tenga una tarea en curso, se invalide o no, así que la diferencia solo aparece con
+    reintentos/temporización no deterministas) — no hay una forma rápida y fiable de
+    verificarlo en un test unitario sin exponer `session` para testing.
+
 ## [1.2.1] - 2026-09-05
 
 ### Documentación

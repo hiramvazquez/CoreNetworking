@@ -28,6 +28,7 @@ thresholds:
   #
   #   2026-09-04  62,2 %  (79/127)   -> trinquete 55
   #   2026-09-04  76,4 %  (120/157)  -> trinquete 70   [supervivientes 39 -> 19]
+  #   2026-09-05  78,2 %  (122/156)  -> trinquete 72   [supervivientes 19 -> 14]
   #
   # La segunda medicion es sobre el arbol con la politica de autenticacion, la de
   # redirecciones y el suelo de seguridad ya dentro (~460 lineas de produccion nuevas,
@@ -37,7 +38,7 @@ thresholds:
   # `timeout`, y eso depende de la velocidad de la maquina — un trinquete clavado al valor
   # exacto medido en local haria fallar el CI en un runner mas lento sin que la suite
   # hubiera empeorado en nada.
-  low: 70
+  low: 72
 
 # Source file glob patterns to exclude from mutation
 exclude:

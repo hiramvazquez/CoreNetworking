@@ -57,4 +57,56 @@ struct NetworkingConfigurationValidateBaseURLTests {
         let configuration = NetworkingConfiguration(baseURL: baseURL)
         #expect(configuration.baseURL == baseURL)
     }
+
+    // MARK: - init: la precondition de verdad (mensaje incluido)
+    //
+    // Los tests de arriba cubren `validateBaseURL` de forma pura, pero nunca
+    // disparan la `precondition` real de `init` — su mensaje (que construye
+    // `Self.validateBaseURL` una SEGUNDA vez para el `?? ""`) solo se evalúa
+    // cuando la condición falla, así que sin un exit test esa construcción de
+    // mensaje queda sin ejercitar. Mismo mecanismo que
+    // `PinningInvariantTests.singlePinTrapsTheInit`. Solo macOS: los exit
+    // tests de Swift Testing no existen en iOS.
+    // NOTA: el closure de `processExitsWith` se compila a un puntero a función
+    // C — NO puede capturar contexto externo (ni siquiera un `let baseURL`
+    // construido antes con `try #require`; el compilador revienta con "a C
+    // function pointer cannot be formed from a closure that captures
+    // context"). Por eso la URL se construye como literal DENTRO del closure,
+    // igual que `PinningInvariantTests.singlePinTrapsTheInit`.
+    #if os(macOS)
+    @Test("una baseURL sin scheme revienta el init con un mensaje que nombra el problema")
+    func missingSchemeTrapsTheInit() async {
+        let result = await #expect(processExitsWith: .failure, observing: [\.standardErrorContent]) {
+            _ = NetworkingConfiguration(baseURL: URL(string: "api.example.com/path")!)
+        }
+        let stderr = String(decoding: result?.standardErrorContent ?? [], as: UTF8.self)
+        #expect(stderr.contains("scheme"))
+    }
+
+    @Test("una baseURL sin host revienta el init con un mensaje que nombra el problema")
+    func missingHostTrapsTheInit() async {
+        let result = await #expect(processExitsWith: .failure, observing: [\.standardErrorContent]) {
+            _ = NetworkingConfiguration(baseURL: URL(string: "file:///etc/hosts")!)
+        }
+        let stderr = String(decoding: result?.standardErrorContent ?? [], as: UTF8.self)
+        #expect(stderr.contains("host"))
+    }
+    #endif
+}
+
+/// `NetworkingConfiguration.defaultSessionConfiguration()`: los defaults de
+/// seguridad/comportamiento que el doc comment del tipo promete
+/// (`waitsForConnectivity`, sin cookies, TLS 1.2 mínimo). Nada más en la
+/// suite los verificaba — `READMEExamplesTests` solo comprueba que el punto
+/// de extensión COMPILA, no qué valores trae de fábrica.
+@Suite("NetworkingConfiguration.defaultSessionConfiguration: defaults documentados")
+struct NetworkingConfigurationDefaultSessionTests {
+    @Test("waitsForConnectivity activado, cookies desactivadas, TLS 1.2 como mínimo")
+    func defaultsMatchDocumentation() {
+        let configuration = NetworkingConfiguration.defaultSessionConfiguration()
+        #expect(configuration.waitsForConnectivity, "esperar red en vez de fallar al instante")
+        #expect(!configuration.httpShouldSetCookies, "una API JSON no necesita cookies")
+        #expect(configuration.httpCookieAcceptPolicy == .never)
+        #expect(configuration.tlsMinimumSupportedProtocolVersion == .TLSv12)
+    }
 }

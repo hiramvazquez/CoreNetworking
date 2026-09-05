@@ -173,6 +173,76 @@ struct APIErrorTests {
         #expect(!APIError(code: .untrustedServer).isRetryable)
     }
 
+    // MARK: - isRetryable: casos degenerados (nadie construye estos errores así,
+    // pero un error sin información no debe considerarse reintentable)
+
+    @Test(".transport sin underlying (sin URLError) no es reintentable")
+    func transportWithoutUnderlyingIsNotRetryable() {
+        // Nadie construye un `.transport` sin `underlying` en producción — lo
+        // pone siempre el propio `APIService` a partir de un `URLError` real —,
+        // pero `isRetryable` no debe asumir que `urlError` existe: sin datos
+        // que lo respalden, "reintentable" no puede ser el default.
+        let error = APIError(code: .transport)
+        #expect(error.urlError == nil, "fixture inválida: se esperaba underlying == nil")
+        #expect(!error.isRetryable)
+    }
+
+    @Test(".httpStatus sin response (sin statusCode) no es reintentable")
+    func httpStatusWithoutResponseIsNotRetryable() {
+        // Igual que arriba: nadie construye un `.httpStatus` sin `response` —
+        // pero sin status no hay 5xx/408/429 que verificar, así que el default
+        // debe ser "no reintentable", no "reintentable por defecto".
+        let error = APIError(code: .httpStatus)
+        #expect(error.statusCode == nil, "fixture inválida: se esperaba statusCode == nil")
+        #expect(!error.isRetryable)
+    }
+
+    // MARK: - description: contrato log-safe (código, método, status, underlying resumido)
+
+    @Test("description incluye code, method, status y underlying resumido")
+    func descriptionIncludesEveryPart() throws {
+        let url = try #require(URL(string: "https://api.example.com/thing"))
+        let error = APIError(
+            code: .httpStatus,
+            request: APIError.RequestSummary(method: .post, url: url),
+            response: APIError.ResponseSummary(statusCode: 500),
+            underlying: URLError(.timedOut)
+        )
+        let description = error.description
+        #expect(description.contains("code: httpStatus"))
+        #expect(description.contains("method: POST"))
+        #expect(description.contains("status: 500"))
+        #expect(description.contains("underlying: URLError(-1001)"))
+    }
+
+    @Test("description de un error mínimo (solo code) no añade partes vacías")
+    func descriptionMinimalHasNoExtraParts() {
+        // Sin request, response ni underlying: si cualquiera de los tres
+        // `parts.append` se disparase igualmente, esta cadena exacta cambiaría.
+        let error = APIError(code: .cancelled)
+        #expect(error.description == "APIError(code: cancelled)")
+    }
+
+    @Test("description nunca expone la URL, el body ni el mensaje de underlying (log-safe)")
+    func descriptionNeverLeaksSensitiveData() throws {
+        struct ServerLeak: Error, CustomStringConvertible {
+            var description: String { "user secret@example.com leaked in the clear" }
+        }
+        let url = try #require(URL(string: "https://secret.example.com/private/path?token=abc"))
+        let error = APIError(
+            code: .httpStatus,
+            request: APIError.RequestSummary(method: .get, url: url),
+            response: APIError.ResponseSummary(statusCode: 500, body: Data("leaked body content".utf8)),
+            underlying: ServerLeak()
+        )
+        let description = error.description
+        #expect(!description.contains("secret.example.com"), "la URL nunca debe salir en la descripción técnica")
+        #expect(!description.contains("token=abc"))
+        #expect(!description.contains("leaked body content"), "el body nunca debe salir en la descripción técnica")
+        #expect(!description.contains("secret@example.com"), "el mensaje de underlying nunca debe sobrevivir")
+        #expect(!description.contains("leaked"))
+    }
+
     // MARK: - isCancellation
 
     @Test("isCancellation es verdadero solo para .cancelled — nunca para .untrustedServer")

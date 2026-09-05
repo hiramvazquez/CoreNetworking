@@ -135,6 +135,26 @@ struct LoggingRedactionTests {
 /// verificable un contrato que un framework del sistema no deja observar.
 @Suite("LoggingInterceptor: contrato de privacidad (funciones puras testables)")
 struct LoggingInterceptorContractTests {
+    // MARK: - init: los defaults son opt-IN, nunca opt-out
+
+    /// `LoggingInterceptor()` sin argumentos debe dejar `includeHeaders` e
+    /// `includeBody` en `false` — nadie debe acabar logueando headers o
+    /// bodies (potencialmente sensibles) solo por instanciar el interceptor
+    /// sin pensarlo. Se lee por `Mirror` (mismo mecanismo que
+    /// `APIError.caseName`, en este mismo target): las dos propiedades son
+    /// `private let`, así que no hay otra forma de observar el default desde
+    /// fuera sin interceptar `os.Logger` (descartado, ver el comentario de
+    /// arriba) ni tocar producción para exponerlas.
+    @Test("LoggingInterceptor() sin argumentos: includeHeaders e includeBody quedan en false (opt-in)")
+    func defaultsAreOptOutOfHeadersAndBody() {
+        let interceptor = LoggingInterceptor()
+        let mirror = Mirror(reflecting: interceptor)
+        let includeHeaders = mirror.children.first { $0.label == "includeHeaders" }?.value as? Bool
+        let includeBody = mirror.children.first { $0.label == "includeBody" }?.value as? Bool
+        #expect(includeHeaders == false, "el default de includeHeaders debe ser false")
+        #expect(includeBody == false, "el default de includeBody debe ser false")
+    }
+
     // MARK: - headersLogPayload — el wiring real de `willSend` con `includeHeaders`
 
     @Test("con includeHeaders, un Authorization nunca sale con su valor real")

@@ -1,4 +1,4 @@
-import Foundation
+public import Foundation
 
 /// Refreshes whatever credential the app's `tokenProvider` (e.g. the one
 /// `BearerTokenInterceptor` reads) will hand back next.

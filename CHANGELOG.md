@@ -4,6 +4,28 @@ Todos los cambios notables de este paquete se documentan en este fichero. El for
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y el versionado,
 [SemVer](https://semver.org/lang/es/).
 
+## [1.3.0] - 2026-09-15
+
+### Cambiado
+
+- **Las seis upcoming features con baseline Swift 7 quedan activadas** (faltaban
+  `ExistentialAny`, `InternalImportsByDefault`, `MemberImportVisibility` e
+  `ImmutableWeakCaptures`). El criterio sale del propio compilador:
+  `swiftc -print-supported-features` declara en Swift 6.4 veintiuna features upcoming, seis
+  con baseline 7. Se adelanta la migración a Swift 7 en vez de esperar a que sea forzosa.
+- **`public import Foundation` en los diez ficheros cuya API pública expone tipos de
+  Foundation** —`URLRequest` en el transporte y los interceptores, `URLQueryItem` en
+  `BaseRequest`, `JSONDecoder`/`JSONEncoder` en la configuración, `Data` en `APIError`—, y
+  `public import CoreNetworking` en `CoreNetworkingTestSupport`. Es lo que obliga a declarar
+  `InternalImportsByDefault`, y deja escrito lo que antes solo se sabía leyendo las firmas.
+  No cambia la API: `public import` ensancha la visibilidad, no la estrecha, y el ejemplo
+  `APIClientApp` compila sin tocar nada.
+- **Existenciales escritos con `any`** en `ManualClock` y en dos tests. Mismo tipo, distinta
+  escritura; obligatorio en Swift 7.
+
+Verificado con Xcode 27 en modo estricto: 243 tests en 33 suites y `check-doc-snippets.sh`
+en verde.
+
 ## [1.2.3] - 2026-09-15
 
 ### Añadido
@@ -21,12 +43,15 @@ Todos los cambios notables de este paquete se documentan en este fichero. El for
 - **El paquete vuelve a compilar con Xcode 27 (Swift 6.4).** `swift-frontend` se cae con un
   segfault en IRGen al compilar `Task { () async throws(APIError) -> Payload in ... }` —
   18 veces entre `Tests/`, `Snippets/` y un ejemplo de la documentación. Es una regresión
-  del compilador (el mismo código compila con Swift 6.3.3, y se reproduce en seis líneas sin
-  este paquete: una closure con `throws(E)` explícito, pasada a un parámetro genérico
-  `() async throws -> T`, con un `E` no vacío). La anotación era redundante: `Task` sigue
-  fijando `Failure == any Error`, así que `task.value` lanza `any Error` con o sin ella. Se
-  retira y `Task` infiere la closure. Verificado con Xcode 27: `swift build --build-tests`
-  en modo estricto y 243 tests en 33 suites en verde.
+  del compilador (el mismo código compila con Swift 6.3.3, y se reproduce en siete líneas
+  sin este paquete: una closure con `throws(E)` explícito, pasada a un parámetro genérico
+  `() async throws -> T`. Cae con casi cualquier `E` con almacenamiento —dos campos, un
+  `String`, un `Optional`, incluso un solo `Bool`—; solo compila si `E` está vacío o se
+  reduce a un escalar de palabra, como un único `Int`, `Double` o una referencia). La
+  anotación era redundante: `Task` sigue fijando `Failure == any Error`, así que
+  `task.value` lanza `any Error` con o sin ella. Se retira y `Task` infiere la closure.
+  Verificado con Xcode 27: `swift build --build-tests` en modo estricto y 243 tests en 33
+  suites en verde.
 - **Los cuatro tests de cancelación con transferencia en vuelo dejan de medir el reloj.**
   Assertaban "tardó menos de 2 s, luego se canceló" contra una latencia de mock de 5 s: la
   misma afirmación por vía indirecta, y falsa en cuanto la máquina va cargada. Pasan a

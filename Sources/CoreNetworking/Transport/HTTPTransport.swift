@@ -1,4 +1,4 @@
-import Foundation
+public import Foundation
 
 /// The single point of test injection below `APIService`: "send an HTTP
 /// request, get back a response".

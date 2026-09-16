@@ -1,9 +1,14 @@
 // swift-tools-version: 6.2
 import PackageDescription
 
-// Approachable Concurrency (Swift 6.2): los upcoming features que el language mode 6
-// NO subsume todavía. El resto (DisableOutwardActorInference, InferSendableFromCaptures,
-// GlobalActorIsolatedTypesUsability) ya son default en modo 6.
+// Las upcoming features cuyo baseline es Swift 7: las que el language mode 6 NO subsume
+// todavía y serán obligatorias en el 7. El criterio no es una lista a ojo — sale de
+// preguntárselo al compilador:
+//
+//     swiftc -print-supported-features
+//
+// Activarlas aquí es adelantar la migración a Swift 7 a un día tranquilo, en vez de
+// descubrirla el día que el toolchain no deje otra opción.
 // El rigor es una propiedad de COMO SE DESARROLLA el paquete, no del artefacto que
 // se publica. Xcode compila las dependencias remotas con `-suppress-warnings` (los
 // warnings de una libreria de terceros no son accionables para quien la consume), y
@@ -18,7 +23,11 @@ let modoEstricto = Context.environment["SWIFT_STRICT_WARNINGS"] != nil
 
 var swiftSettings: [SwiftSetting] = [
     .enableUpcomingFeature("InferIsolatedConformances"),
-    .enableUpcomingFeature("NonisolatedNonsendingByDefault")
+    .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+    .enableUpcomingFeature("ExistentialAny"),
+    .enableUpcomingFeature("InternalImportsByDefault"),
+    .enableUpcomingFeature("MemberImportVisibility"),
+    .enableUpcomingFeature("ImmutableWeakCaptures")
 ]
 
 if modoEstricto {

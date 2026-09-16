@@ -1,4 +1,4 @@
-import Foundation
+public import Foundation
 
 /// HTTP method. Lowercase cases, `rawValue` in uppercase — la convención de
 /// Swift (y de `HTTPTypes` de Apple), no la del wire format.

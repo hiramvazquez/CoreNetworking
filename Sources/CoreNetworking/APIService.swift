@@ -1,4 +1,5 @@
-import Foundation
+public import Foundation
+import os
 
 /// Production API service.
 ///

@@ -3,7 +3,7 @@
 //  CoreNetworking
 //
 
-import Foundation
+public import Foundation
 
 /// Configuración de red inmutable que se inyecta en `APIService` al construirlo.
 ///

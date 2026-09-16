@@ -1,4 +1,4 @@
-import Foundation
+public import Foundation
 
 /// Protocol for network service capable of executing API requests.
 ///

@@ -1,4 +1,4 @@
-import Foundation
+public import Foundation
 
 /// The single error type of CoreNetworking. Every public API throws it
 /// (typed throws), and every failure — transport, HTTP status, decoding, an

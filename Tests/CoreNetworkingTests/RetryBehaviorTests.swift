@@ -218,7 +218,7 @@ struct RetryBehaviorTests {
     /// `RequestContext` (la rama `catch let apiError as APIError`).
     private struct UnencodableBody: Encodable, Sendable {
         let counter: EncodeAttemptCounter
-        func encode(to encoder: Encoder) throws {
+        func encode(to encoder: any Encoder) throws {
             _ = counter.recordAttempt()
             throw AlwaysFailsEncoding()
         }

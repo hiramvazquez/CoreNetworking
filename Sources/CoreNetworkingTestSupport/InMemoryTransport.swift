@@ -1,5 +1,5 @@
-import CoreNetworking
-import Foundation
+public import CoreNetworking
+public import Foundation
 
 /// In-memory `HTTPTransport`: no `URLSession`, no global registry, no
 /// `URLProtocol` — the primary way to unit-test `APIService`.

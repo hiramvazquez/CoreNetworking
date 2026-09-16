@@ -1,5 +1,5 @@
-import CoreNetworking
-import Foundation
+public import CoreNetworking
+public import Foundation
 
 /// Records every `willSend`/`didReceive`/`didFail` call it receives, in
 /// order — the interceptor to test YOUR OWN interceptors and retriers

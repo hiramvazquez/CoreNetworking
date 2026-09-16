@@ -1,4 +1,4 @@
-import Foundation
+public import Foundation
 import os
 
 /// Production `HTTPTransport`: one `URLSession` owned by this transport,

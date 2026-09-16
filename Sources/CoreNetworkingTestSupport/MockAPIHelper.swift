@@ -1,5 +1,5 @@
-import CoreNetworking
-import Foundation
+public import CoreNetworking
+public import Foundation
 
 /// Convenience helpers over `MockURLProtocol.register`.
 ///

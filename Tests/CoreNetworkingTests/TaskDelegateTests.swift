@@ -50,7 +50,7 @@ struct TaskDelegateTests {
         let session = URLSession(configuration: .ephemeral)
         defer { session.finishTasksAndInvalidate() }
         var capturedTask: URLSessionDownloadTask?
-        let location = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
+        let location = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, any Error>) in
             let task = session.downloadTask(with: url) { location, _, error in
                 if let error {
                     continuation.resume(throwing: error)

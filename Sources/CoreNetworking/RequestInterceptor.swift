@@ -1,4 +1,4 @@
-import Foundation
+public import Foundation
 import os
 
 /// Identity + timing for ONE attempt through the pipeline.

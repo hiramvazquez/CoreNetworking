@@ -91,7 +91,7 @@ struct RetrierTests {
             clock: clock
         )
 
-        let task = Task { () async throws(APIError) -> Payload in
+        let task = Task {
             try await service.execute(GetRequest())
         }
         await clock.waitUntilSleeping()
@@ -224,7 +224,7 @@ struct RetrierTests {
             clock: clock
         )
 
-        let task = Task { () async throws(APIError) -> Payload in
+        let task = Task {
             try await service.execute(GetRequest())
         }
         await clock.waitUntilSleeping()
@@ -258,7 +258,7 @@ struct RetrierTests {
             clock: clock
         )
 
-        let task = Task { () async throws(APIError) -> Payload in
+        let task = Task {
             try await service.execute(GetRequest())
         }
         for _ in 0..<2 {
@@ -312,7 +312,7 @@ struct RetrierTests {
             clock: clock
         )
 
-        let task = Task { () async throws(APIError) -> Payload in
+        let task = Task {
             try await service.execute(GetRequest())
         }
         await clock.waitUntilSleeping()
@@ -401,7 +401,7 @@ struct RetrierTests {
             clock: clock
         )
 
-        let task = Task { () async throws(APIError) -> Payload in
+        let task = Task {
             try await service.execute(GetRequest())
         }
         await clock.waitUntilSleeping()
@@ -441,7 +441,7 @@ struct RetrierTests {
             clock: clock
         )
 
-        let task = Task { () async throws(APIError) -> Payload in
+        let task = Task {
             try await service.execute(GetRequest())
         }
         await clock.waitUntilSleeping()
@@ -499,7 +499,7 @@ struct RetrierTests {
             clock: clock
         )
 
-        let task = Task { () async throws(APIError) -> Payload in
+        let task = Task {
             try await service.execute(GetRequest())
         }
         await clock.waitUntilSleeping()
@@ -544,7 +544,7 @@ struct RetrierTests {
             clock: clock
         )
 
-        let task = Task { () async throws(APIError) -> Payload in
+        let task = Task {
             try await service.execute(GetRequest())
         }
         await clock.waitUntilSleeping()
@@ -609,7 +609,7 @@ struct RetrierTests {
             clock: clock
         )
 
-        let task = Task { () async throws(APIError) -> Payload in
+        let task = Task {
             try await service.execute(GetRequest())
         }
         // Un solo backoff esperado: intento 1 (401) → refresh → .retry →

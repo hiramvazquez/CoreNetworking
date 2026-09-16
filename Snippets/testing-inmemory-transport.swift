@@ -33,7 +33,7 @@ func retryEventuallySucceeds() async throws {
         clock: clock
     )
 
-    let task = Task { () async throws(APIError) -> GetGames.Response in
+    let task = Task {
         try await service.execute(GetGames())
     }
 

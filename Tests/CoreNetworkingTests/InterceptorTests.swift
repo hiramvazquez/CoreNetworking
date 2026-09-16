@@ -304,7 +304,7 @@ struct InterceptorTests {
             clock: clock
         )
 
-        let task = Task { () async throws(APIError) -> Payload in
+        let task = Task {
             try await service.execute(GetRequest())
         }
         for _ in 0..<2 {

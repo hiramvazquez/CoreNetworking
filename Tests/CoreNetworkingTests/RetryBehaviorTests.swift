@@ -50,7 +50,7 @@ struct RetryBehaviorTests {
         request: GetRequest = GetRequest(),
         retries: Int
     ) async throws -> Payload {
-        let task = Task { () async throws(APIError) -> Payload in
+        let task = Task {
             try await service.execute(request)
         }
         for _ in 0..<retries {
@@ -117,7 +117,7 @@ struct RetryBehaviorTests {
         let clock = ManualClock()
         let apiService = service(transport: transport, clock: clock, maxAttempts: 3)
 
-        let task = Task { () async throws(APIError) -> Payload in
+        let task = Task {
             try await apiService.execute(OptInPostRequest())
         }
         await clock.waitUntilSleeping()
@@ -148,7 +148,7 @@ struct RetryBehaviorTests {
         // vez de este backoff, es porque se respetó el Retry-After.
         let apiService = service(transport: transport, clock: clock, maxAttempts: 2, initialDelay: .seconds(3600))
 
-        let task = Task { () async throws(APIError) -> Payload in
+        let task = Task {
             try await apiService.execute(GetRequest())
         }
         await clock.waitUntilSleeping()
@@ -253,7 +253,7 @@ struct RetryBehaviorTests {
         )
         let request = EncodingFailingRequest(body: UnencodableBody(counter: counter))
 
-        let task = Task { () async throws(APIError) -> Payload in
+        let task = Task {
             try await apiService.execute(request)
         }
         // Conductor del reloj en SEGUNDO PLANO, sin asumir cuántos backoffs

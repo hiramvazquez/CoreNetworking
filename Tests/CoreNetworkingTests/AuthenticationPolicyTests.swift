@@ -140,7 +140,7 @@ struct AuthenticationPolicyTests {
             clock: clock
         )
 
-        let task = Task { () async throws(APIError) -> Payload in
+        let task = Task {
             try await service.execute(GetRequest())
         }
         await clock.waitUntilSleeping()

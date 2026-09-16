@@ -18,6 +18,15 @@ Todos los cambios notables de este paquete se documentan en este fichero. El for
 
 ### Corregido
 
+- **El paquete vuelve a compilar con Xcode 27 (Swift 6.4).** `swift-frontend` se cae con un
+  segfault en IRGen al compilar `Task { () async throws(APIError) -> Payload in ... }` —
+  16 veces entre `Tests/`, `Snippets/` y un ejemplo de la documentación. Es una regresión
+  del compilador (el mismo código compila con Swift 6.3.3, y se reproduce en seis líneas sin
+  este paquete: una closure con `throws(E)` explícito, pasada a un parámetro genérico
+  `() async throws -> T`, con un `E` no vacío). La anotación era redundante: `Task` sigue
+  fijando `Failure == any Error`, así que `task.value` lanza `any Error` con o sin ella. Se
+  retira y `Task` infiere la closure. Verificado con Xcode 27: `swift build --build-tests`
+  en modo estricto y 243 tests en 33 suites en verde.
 - **Los cuatro tests de cancelación con transferencia en vuelo dejan de medir el reloj.**
   Assertaban "tardó menos de 2 s, luego se canceló" contra una latencia de mock de 5 s: la
   misma afirmación por vía indirecta, y falsa en cuanto la máquina va cargada. Pasan a

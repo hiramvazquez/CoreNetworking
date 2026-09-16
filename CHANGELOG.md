@@ -4,6 +4,15 @@ Todos los cambios notables de este paquete se documentan en este fichero. El for
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y el versionado,
 [SemVer](https://semver.org/lang/es/).
 
+## [1.3.1] - 2026-09-16
+
+### Corregido
+
+- **Formato**: al escribir `any Error` en `TaskDelegateTests`, una línea pasó de 96 a 122
+  columnas y rompía `swift format lint --strict`. Solo afecta al desarrollo del paquete —el
+  fichero es de test y no viaja a quien lo consume—, pero deja el CI en verde sobre el tag
+  publicado, que es la única forma de que la próxima rotura se vea el día que ocurra.
+
 ## [1.3.0] - 2026-09-15
 
 ### Cambiado

@@ -4,7 +4,7 @@ Todos los cambios notables de este paquete se documentan en este fichero. El for
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y el versionado,
 [SemVer](https://semver.org/lang/es/).
 
-## [Unreleased]
+## [1.2.3] - 2026-09-15
 
 ### Añadido
 
@@ -20,7 +20,7 @@ Todos los cambios notables de este paquete se documentan en este fichero. El for
 
 - **El paquete vuelve a compilar con Xcode 27 (Swift 6.4).** `swift-frontend` se cae con un
   segfault en IRGen al compilar `Task { () async throws(APIError) -> Payload in ... }` —
-  16 veces entre `Tests/`, `Snippets/` y un ejemplo de la documentación. Es una regresión
+  18 veces entre `Tests/`, `Snippets/` y un ejemplo de la documentación. Es una regresión
   del compilador (el mismo código compila con Swift 6.3.3, y se reproduce en seis líneas sin
   este paquete: una closure con `throws(E)` explícito, pasada a un parámetro genérico
   `() async throws -> T`, con un `E` no vacío). La anotación era redundante: `Task` sigue
